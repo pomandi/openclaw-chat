@@ -128,7 +128,7 @@ export default function Home() {
       ) : null}
 
       {/* Main content */}
-      <div className={`flex-1 min-w-0 ${!selectedAgentId ? 'hidden md:flex' : 'flex'}`}>
+      <div className={`flex-1 min-w-0 flex flex-col ${!selectedAgentId ? 'hidden md:flex' : ''}`}>
         {selectedAgent ? (
           <ChatView
             agent={selectedAgent}
