@@ -22,6 +22,7 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar }: ChatViewP
   const [retryMessage, setRetryMessage] = useState<ChatMessage | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [voiceMode, setVoiceMode] = useState(false);
+  const [loadingHistory, setLoadingHistory] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -58,14 +59,64 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar }: ChatViewP
     scrollToBottom();
   }, [messages, streamText, scrollToBottom]);
 
-  // Load messages from localStorage
+  // Load chat history from server (transcripts), then merge with localStorage
   useEffect(() => {
-    const stored = localStorage.getItem(`chat:${sessionKey}`);
-    if (stored) {
+    let cancelled = false;
+    setLoadingHistory(true);
+    setMessages([]);
+
+    async function loadHistory() {
       try {
-        setMessages(JSON.parse(stored));
-      } catch { /* ignore */ }
+        const res = await fetch(`/api/gateway/history?sessionKey=${encodeURIComponent(sessionKey)}&limit=100`);
+        if (res.ok && !cancelled) {
+          const data = await res.json();
+          const serverMessages: ChatMessage[] = (data.messages || []).map((m: any) => ({
+            ...m,
+            status: 'sent' as const,
+          }));
+
+          // Merge: use server history as base, then append any local-only messages
+          // (messages sent after last server history timestamp)
+          const stored = localStorage.getItem(`chat:${sessionKey}`);
+          let localMessages: ChatMessage[] = [];
+          if (stored) {
+            try {
+              localMessages = JSON.parse(stored);
+            } catch { /* ignore */ }
+          }
+
+          if (serverMessages.length > 0) {
+            const lastServerTs = serverMessages[serverMessages.length - 1]?.timestamp || 0;
+            // Find local messages that are newer than server history
+            const localOnly = localMessages.filter(m =>
+              m.timestamp > lastServerTs && !m.id.startsWith('hist_')
+            );
+            setMessages([...serverMessages, ...localOnly]);
+          } else if (localMessages.length > 0) {
+            // No server history, use localStorage as fallback
+            setMessages(localMessages);
+          }
+        }
+      } catch (err) {
+        console.error('[Chat] history load error:', err);
+        // Fallback to localStorage
+        const stored = localStorage.getItem(`chat:${sessionKey}`);
+        if (stored && !cancelled) {
+          try { setMessages(JSON.parse(stored)); } catch { /* */ }
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingHistory(false);
+          // Force scroll to bottom after history loads
+          setTimeout(() => {
+            messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+          }, 100);
+        }
+      }
     }
+
+    loadHistory();
+    return () => { cancelled = true; };
   }, [sessionKey]);
 
   // Save messages to localStorage
@@ -510,7 +561,29 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar }: ChatViewP
 
       {/* Messages */}
       <div ref={messagesContainerRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-3 relative">
-        {messages.length === 0 && !streaming ? (
+        {loadingHistory ? (
+          <div className="space-y-4 animate-pulse">
+            {/* Skeleton loading for chat history */}
+            {[...Array(5)].map((_, i) => (
+              <div key={i} className={`flex gap-2 ${i % 2 === 0 ? 'flex-row-reverse' : ''}`}>
+                {i % 2 !== 0 && (
+                  <div className="w-7 h-7 rounded-full bg-[var(--bg-tertiary)] shrink-0 mt-1" />
+                )}
+                <div className={`${i % 2 === 0 ? 'ml-auto' : ''} max-w-[70%]`}>
+                  <div
+                    className={`h-10 rounded-2xl ${
+                      i % 2 === 0
+                        ? 'bg-[var(--bubble-user)]/40 rounded-tr-md'
+                        : 'bg-[var(--bubble-assistant)]/40 rounded-tl-md'
+                    }`}
+                    style={{ width: `${100 + Math.random() * 150}px` }}
+                  />
+                  <div className="h-3 w-12 mt-1 rounded bg-[var(--bg-tertiary)]/30 ml-1" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : messages.length === 0 && !streaming ? (
           <div className="flex flex-col items-center justify-center h-full text-center">
             <div className="text-4xl mb-4">{agentEmoji}</div>
             <h2 className="text-lg font-medium text-white mb-2">Chat with {agentName}</h2>
@@ -716,7 +789,15 @@ function MessageBubble({ message, agentEmoji }: { message: ChatMessage; agentEmo
     );
   }
 
-  const timeStr = new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const msgDate = new Date(message.timestamp);
+  const now = new Date();
+  const isToday = msgDate.toDateString() === now.toDateString();
+  const isYesterday = msgDate.toDateString() === new Date(now.getTime() - 86400000).toDateString();
+  const timeStr = isToday
+    ? msgDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : isYesterday
+      ? `Yesterday ${msgDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+      : `${msgDate.toLocaleDateString([], { day: 'numeric', month: 'short' })} ${msgDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
 
   return (
     <div className={`flex gap-2 animate-fade-in ${isUser ? 'flex-row-reverse' : ''}`}>
