@@ -111,7 +111,19 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
     }
 
     loadHistory();
-    return () => { cancelled = true; };
+
+    // Reload history when tab becomes visible again (browser was closed/minimized)
+    function onVisibilityChange() {
+      if (document.visibilityState === 'visible' && !cancelled) {
+        loadHistory();
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      cancelled = true;
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
   }, [sessionKey]);
 
   // Save messages to localStorage

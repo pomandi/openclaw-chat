@@ -80,9 +80,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'No response stream' }, { status: 502 });
     }
 
-    // Create a transform stream to collect the full response for push notification
+    // Create a transform stream that keeps consuming gateway response
+    // even if the browser disconnects (so the agent run completes)
     const reader = gatewayRes.body.getReader();
     let fullResponse = '';
+    let browserDisconnected = false;
 
     const stream = new ReadableStream({
       async start(controller) {
@@ -91,7 +93,9 @@ export async function POST(req: NextRequest) {
           while (true) {
             const { done, value } = await reader.read();
             if (done) {
-              controller.close();
+              if (!browserDisconnected) {
+                try { controller.close(); } catch {}
+              }
               // Send push notification with collected response
               if (fullResponse.trim()) {
                 const preview = fullResponse.length > 100
@@ -105,9 +109,6 @@ export async function POST(req: NextRequest) {
               }
               break;
             }
-
-            // Pass through the chunk
-            controller.enqueue(value);
 
             // Try to extract content from SSE chunks for push notification
             const text = decoder.decode(value, { stream: true });
@@ -123,9 +124,26 @@ export async function POST(req: NextRequest) {
                 }
               }
             }
+
+            // Try to pass through the chunk to browser
+            if (!browserDisconnected) {
+              try {
+                controller.enqueue(value);
+              } catch {
+                // Browser disconnected — keep consuming gateway stream
+                // so the agent run completes and writes to transcript
+                browserDisconnected = true;
+                console.log(`[API] Browser disconnected for ${agentId}, continuing agent run in background`);
+              }
+            }
+            // If browserDisconnected, we keep looping and reading from gateway
+            // The agent continues its work, transcript gets written
           }
         } catch (err) {
-          controller.error(err);
+          // Gateway connection error
+          if (!browserDisconnected) {
+            try { controller.error(err); } catch {}
+          }
         }
       },
     });
