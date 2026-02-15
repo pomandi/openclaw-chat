@@ -407,7 +407,7 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar }: ChatViewP
     const userMsg: ChatMessage = {
       id: `user_${Date.now()}`,
       role: 'user',
-      content: '',
+      content: '🎤 Transcribing...',
       timestamp: Date.now(),
       status: 'sending',
       attachments: [audioAttachment],
@@ -425,21 +425,48 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar }: ChatViewP
 
     (async () => {
       try {
+        // Step 1: Transcribe audio to text
+        let transcribedText = '[Voice message]';
+        try {
+          const transcribeRes = await fetch('/api/transcribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ audio: dataUrl, language: 'tr' }),
+            signal: AbortSignal.timeout(55000),
+          });
+          if (transcribeRes.ok) {
+            const transcribeData = await transcribeRes.json();
+            if (transcribeData.text?.trim()) {
+              transcribedText = transcribeData.text.trim();
+            }
+          }
+        } catch (e) {
+          console.warn('[Voice] Transcription failed, sending as audio:', e);
+        }
+
+        // Update user message with transcribed text
+        setMessages(prev => prev.map(m =>
+          m.id === userMsg.id ? { ...m, content: transcribedText } : m
+        ));
+
+        // Step 2: Send transcribed text (or audio fallback) to agent
         const res = await fetch('/api/gateway/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             agentId,
-            message: '[Voice message]',
+            message: transcribedText,
             sessionKey,
-            attachments: [{
-              type: 'audio',
-              name: audioAttachment.name,
-              size: audioAttachment.size,
-              mimeType: audioAttachment.mimeType,
-              dataUrl: audioAttachment.dataUrl,
-              duration,
-            }],
+            ...(transcribedText === '[Voice message]' ? {
+              attachments: [{
+                type: 'audio',
+                name: audioAttachment.name,
+                size: audioAttachment.size,
+                mimeType: audioAttachment.mimeType,
+                dataUrl: audioAttachment.dataUrl,
+                duration,
+              }],
+            } : {}),
           }),
           signal: controller.signal,
         });
