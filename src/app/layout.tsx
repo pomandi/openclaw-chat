@@ -10,6 +10,12 @@ export const metadata: Metadata = {
     capable: true,
     statusBarStyle: 'black-translucent',
     title: 'OpenClaw',
+    startupImage: [
+      {
+        url: '/splash-iphone.png',
+        media: '(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3)',
+      },
+    ],
   },
   icons: {
     icon: [
@@ -39,7 +45,14 @@ export default function RootLayout({
       <head>
         <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
-        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+        <meta name="apple-mobile-web-app-title" content="OpenClaw" />
+        {/* Splash screens for iOS */}
+        <link
+          rel="apple-touch-startup-image"
+          href="/splash-iphone.png"
+          media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3)"
+        />
       </head>
       <body className="bg-[var(--bg-primary)] text-[var(--text-primary)]">
         <PWARegister />

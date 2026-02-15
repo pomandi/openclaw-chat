@@ -1,5 +1,5 @@
 // OpenClaw Gateway HTTP Client (server-side)
-// Uses the HTTP API endpoints instead of WebSocket for simplicity
+// Uses the HTTP API endpoints
 
 const GATEWAY_HTTP_URL = process.env.OPENCLAW_GATEWAY_HTTP_URL || 'http://127.0.0.1:18789';
 const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN || '';
@@ -17,7 +17,7 @@ async function gatewayFetch(path: string, options: RequestInit = {}): Promise<Re
   return res;
 }
 
-// Agent info from config (since we know the agents from openclaw.json)
+// Agent info from config
 const AGENTS_CONFIG = [
   { id: 'main', name: 'CEO Agent' },
   { id: 'coding-agent', name: 'Poma Coding Agent' },
@@ -38,8 +38,6 @@ const AGENTS_CONFIG = [
 ];
 
 export async function listAgents() {
-  // Return the agents list from config
-  // The gateway doesn't expose a simple HTTP endpoint for this
   return {
     defaultId: 'main',
     mainKey: 'agent:main:main',
@@ -48,32 +46,46 @@ export async function listAgents() {
   };
 }
 
-export async function sendChatMessage(agentId: string, message: string, sessionKey?: string): Promise<ReadableStream<Uint8Array> | null> {
+export interface MessageContent {
+  type: 'text' | 'image_url';
+  text?: string;
+  image_url?: { url: string; detail?: string };
+}
+
+export async function streamChatMessage(
+  agentId: string,
+  message: string | MessageContent[],
+  sessionKey?: string
+): Promise<Response> {
+  // Build content - either simple string or multimodal array
+  const content = typeof message === 'string' ? message : message;
+
   const res = await gatewayFetch('/v1/chat/completions', {
     method: 'POST',
     body: JSON.stringify({
       model: `openclaw:${agentId}`,
       stream: true,
-      messages: [{ role: 'user', content: message }],
+      messages: [{ role: 'user', content }],
       ...(sessionKey ? { user: sessionKey } : {}),
     }),
   });
 
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Gateway error ${res.status}: ${text}`);
-  }
-
-  return res.body;
+  return res;
 }
 
-export async function sendChatMessageSync(agentId: string, message: string, sessionKey?: string): Promise<string> {
+export async function sendChatMessageSync(
+  agentId: string,
+  message: string | MessageContent[],
+  sessionKey?: string
+): Promise<string> {
+  const content = typeof message === 'string' ? message : message;
+
   const res = await gatewayFetch('/v1/chat/completions', {
     method: 'POST',
     body: JSON.stringify({
       model: `openclaw:${agentId}`,
       stream: false,
-      messages: [{ role: 'user', content: message }],
+      messages: [{ role: 'user', content }],
       ...(sessionKey ? { user: sessionKey } : {}),
     }),
   });

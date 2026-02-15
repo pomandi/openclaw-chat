@@ -17,21 +17,14 @@ export interface AgentsListResult {
   agents: Agent[];
 }
 
-export interface Session {
-  key: string;
-  agentId: string;
-  label?: string;
-  model?: string;
-  createdAt?: number;
-  updatedAt?: number;
-  lastActivityMs?: number;
-  tokens?: { used: number; max: number };
-  derivedTitle?: string;
-  lastMessage?: {
-    role: string;
-    content: string;
-    ts: number;
-  };
+export interface Attachment {
+  id: string;
+  type: 'image' | 'file';
+  name: string;
+  size: number;
+  mimeType: string;
+  dataUrl: string; // base64 data URL
+  previewUrl?: string; // for images, a thumbnail
 }
 
 export interface ChatMessage {
@@ -41,6 +34,7 @@ export interface ChatMessage {
   timestamp: number;
   status?: 'sending' | 'sent' | 'error';
   runId?: string;
+  attachments?: Attachment[];
 }
 
 export interface ChatEvent {
@@ -81,3 +75,10 @@ export function getAgentEmoji(agentId: string, agent?: Agent): string {
 export function getAgentName(agent: Agent): string {
   return agent.identity?.name || agent.name || agent.id;
 }
+
+// Max file size: 10MB
+export const MAX_FILE_SIZE = 10 * 1024 * 1024;
+
+// Supported file types
+export const SUPPORTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+export const SUPPORTED_FILE_TYPES = [...SUPPORTED_IMAGE_TYPES, 'application/pdf'];

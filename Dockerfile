@@ -31,8 +31,15 @@ RUN chown nextjs:nodejs .next
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
-# Copy ws module explicitly (serverExternalPackages)
+# Copy required server-side modules
 COPY --from=builder /app/node_modules/ws ./node_modules/ws
+COPY --from=builder /app/node_modules/web-push ./node_modules/web-push
+COPY --from=builder /app/node_modules/http_ece ./node_modules/http_ece
+COPY --from=builder /app/node_modules/asn1.js ./node_modules/asn1.js
+COPY --from=builder /app/node_modules/bn.js ./node_modules/bn.js
+COPY --from=builder /app/node_modules/minimist ./node_modules/minimist
+COPY --from=builder /app/node_modules/inherits ./node_modules/inherits
+COPY --from=builder /app/node_modules/safer-buffer ./node_modules/safer-buffer
 
 USER nextjs
 EXPOSE 3000

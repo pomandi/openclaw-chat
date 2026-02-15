@@ -68,8 +68,35 @@ body {
   40% { opacity: 1; transform: scale(1); }
 }
 
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 .animate-fade-in {
   animation: fadeIn 0.2s ease-out;
+}
+
+.animate-blink {
+  animation: blink 1s infinite;
+}
+
+.animate-slide-down {
+  animation: slideDown 0.3s ease-out;
+}
+
+.animate-slide-up {
+  animation: slideUp 0.3s ease-out;
 }
 
 .typing-dot {
@@ -84,3 +111,32 @@ body {
 .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
 .safe-left { padding-left: env(safe-area-inset-left); }
 .safe-right { padding-right: env(safe-area-inset-right); }
+
+/* Markdown code blocks */
+pre code {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* Image in chat */
+.chat-image {
+  max-width: 100%;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+.chat-image:hover {
+  opacity: 0.9;
+}
+
+/* Smooth scroll for messages container */
+.messages-container {
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Selection color */
+::selection {
+  background: var(--accent);
+  color: white;
+}
