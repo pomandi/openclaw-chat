@@ -90,9 +90,12 @@ class TranscriptionHandler(http.server.BaseHTTPRequestHandler):
                 capture_output=True, timeout=30
             )
 
-            # Run Whisper
+            # Run Whisper (use full path since systemd may not have ~/.local/bin in PATH)
+            whisper_bin = os.path.expanduser('~/.local/bin/whisper')
+            if not os.path.exists(whisper_bin):
+                whisper_bin = 'whisper'  # fallback to PATH
             result = subprocess.run(
-                ['whisper', wav_path, '--language', language, '--model', 'base',
+                [whisper_bin, wav_path, '--language', language, '--model', 'base',
                  '--output_format', 'txt', '--output_dir', '/tmp/whisper_out'],
                 capture_output=True, text=True, timeout=60
             )

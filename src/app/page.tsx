@@ -89,8 +89,8 @@ export default function Home() {
 
   return (
     <div className="flex h-screen overflow-hidden">
-      {/* Sidebar - desktop: always visible */}
-      <div className="hidden md:flex w-72 shrink-0 border-r border-[var(--border)]">
+      {/* Sidebar - desktop: always visible, fixed width */}
+      <div className="hidden md:flex md:flex-col w-72 shrink-0 border-r border-[var(--border)]">
         <AgentSidebar
           agents={agents}
           selectedAgentId={selectedAgentId}
@@ -99,9 +99,9 @@ export default function Home() {
         />
       </div>
 
-      {/* Sidebar - mobile: full screen when no agent selected, overlay when agent selected */}
-      {!selectedAgentId ? (
-        <div className="flex-1 md:hidden">
+      {/* Mobile: full-screen agent list when no agent selected */}
+      {!selectedAgentId && (
+        <div className="flex flex-col flex-1 md:hidden">
           <AgentSidebar
             agents={agents}
             selectedAgentId={selectedAgentId}
@@ -109,26 +109,32 @@ export default function Home() {
             loading={loadingAgents}
           />
         </div>
-      ) : sidebarOpen ? (
+      )}
+
+      {/* Mobile: sidebar overlay when agent is selected and sidebar toggled */}
+      {selectedAgentId && sidebarOpen && (
         <div className="fixed inset-0 z-50 md:hidden">
           <div
-            className="absolute inset-0 bg-black/50"
+            className="absolute inset-0 bg-black/50 backdrop-blur-sm"
             onClick={() => setSidebarOpen(false)}
           />
-          <div className="absolute left-0 top-0 bottom-0 w-80 animate-fade-in">
+          <div className="absolute left-0 top-0 bottom-0 w-[85vw] max-w-80 shadow-2xl animate-slide-in-left">
             <AgentSidebar
               agents={agents}
               selectedAgentId={selectedAgentId}
-              onSelectAgent={setSelectedAgentId}
+              onSelectAgent={(id) => {
+                setSelectedAgentId(id);
+                setSidebarOpen(false);
+              }}
               onClose={() => setSidebarOpen(false)}
               loading={loadingAgents}
             />
           </div>
         </div>
-      ) : null}
+      )}
 
-      {/* Main content */}
-      <div className={`flex-1 min-w-0 flex flex-col ${!selectedAgentId ? 'hidden md:flex' : ''}`}>
+      {/* Main content - hidden on mobile when no agent, always visible on desktop */}
+      <div className={`flex-1 min-w-0 flex flex-col ${!selectedAgentId ? 'hidden md:flex' : 'flex'}`}>
         {selectedAgent ? (
           <ChatView
             agent={selectedAgent}
