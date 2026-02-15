@@ -634,7 +634,7 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
             <span className="hidden sm:inline">Processing...</span>
           </div>
         ) : (
-          <div className="text-[9px] text-[var(--text-muted)]/50 shrink-0 select-none">v5</div>
+          <div className="text-[9px] text-[var(--text-muted)]/50 shrink-0 select-none">v6</div>
         )}
       </div>
 

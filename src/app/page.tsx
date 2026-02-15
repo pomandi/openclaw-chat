@@ -1,10 +1,28 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import LoginScreen from '@/components/LoginScreen';
-import AgentSidebar from '@/components/AgentSidebar';
+import AgentSidebar, { AgentUnreadInfo } from '@/components/AgentSidebar';
 import ChatView from '@/components/ChatView';
 import { Agent, AgentsListResult } from '@/lib/types';
+
+const LAST_SEEN_KEY = 'openclaw-lastSeen';
+const UNREAD_POLL_INTERVAL = 30_000; // 30 seconds
+
+function loadLastSeen(): Record<string, number> {
+  try {
+    const stored = localStorage.getItem(LAST_SEEN_KEY);
+    return stored ? JSON.parse(stored) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveLastSeen(map: Record<string, number>) {
+  try {
+    localStorage.setItem(LAST_SEEN_KEY, JSON.stringify(map));
+  } catch {}
+}
 
 export default function Home() {
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
@@ -14,23 +32,49 @@ export default function Home() {
   const [loadingAgents, setLoadingAgents] = useState(true);
   const [defaultAgentId, setDefaultAgentId] = useState<string>('main');
   const [mainKey, setMainKey] = useState<string>('');
+  const [unreadMap, setUnreadMap] = useState<Record<string, AgentUnreadInfo>>({});
+  const [lastSeenMap, setLastSeenMap] = useState<Record<string, number>>(loadLastSeen);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Fetch unread info
+  const fetchUnread = useCallback(async () => {
+    try {
+      const res = await fetch('/api/gateway/unread');
+      if (res.ok) {
+        const data = await res.json();
+        setUnreadMap(data);
+      }
+    } catch {
+      // silent fail
+    }
+  }, []);
+
+  // Mark agent as read
+  const markAsRead = useCallback((agentId: string) => {
+    setLastSeenMap(prev => {
+      const updated = { ...prev, [agentId]: Date.now() };
+      saveLastSeen(updated);
+      return updated;
+    });
+  }, []);
 
   // Handle agent selection with browser history
   const selectAgent = useCallback((agentId: string | null) => {
     if (agentId && !selectedAgentId) {
-      // Entering an agent — push a history entry so browser back returns to list
       window.history.pushState({ view: 'chat', agentId }, '');
-    } else if (!agentId && selectedAgentId) {
-      // Going back to list — no push needed (already navigating back)
     }
     setSelectedAgentId(agentId);
     setSidebarOpen(false);
-  }, [selectedAgentId]);
+    
+    // Mark as read when selecting
+    if (agentId) {
+      markAsRead(agentId);
+    }
+  }, [selectedAgentId, markAsRead]);
 
   // Handle browser back button / swipe gesture
   useEffect(() => {
-    function handlePopState(e: PopStateEvent) {
-      // When user presses back, go to agent list
+    function handlePopState() {
       setSelectedAgentId(null);
       setSidebarOpen(false);
     }
@@ -64,6 +108,37 @@ export default function Home() {
     setLoadingAgents(false);
   }
 
+  // Start polling for unread when authenticated
+  useEffect(() => {
+    if (!authenticated) return;
+    
+    // Initial fetch
+    fetchUnread();
+    
+    // Poll every 30s
+    pollRef.current = setInterval(fetchUnread, UNREAD_POLL_INTERVAL);
+    
+    // Also fetch on visibility change (tab becomes active)
+    function onVisibility() {
+      if (document.visibilityState === 'visible') {
+        fetchUnread();
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibility);
+    
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [authenticated, fetchUnread]);
+
+  // Mark current agent as read when receiving new messages
+  useEffect(() => {
+    if (selectedAgentId) {
+      markAsRead(selectedAgentId);
+    }
+  }, [selectedAgentId, unreadMap, markAsRead]);
+
   // Load agents after login
   const loadAgents = useCallback(async () => {
     setLoadingAgents(true);
@@ -83,22 +158,23 @@ export default function Home() {
   function handleLogin() {
     setAuthenticated(true);
     loadAgents();
+    fetchUnread();
   }
 
   function getSessionKey(agentId: string): string {
-    // Generate session key matching OpenClaw convention
     return `agent:${agentId}:main`;
   }
 
-  // Navigate back to agent list (also pops browser history)
+  // Navigate back to agent list
   const goBack = useCallback(() => {
     setSelectedAgentId(null);
     setSidebarOpen(false);
-    // Pop the history entry we pushed when selecting agent
     if (window.history.state?.view === 'chat') {
       window.history.back();
     }
-  }, []);
+    // Refresh unread when going back to list
+    fetchUnread();
+  }, [fetchUnread]);
 
   const selectedAgent = agents.find(a => a.id === selectedAgentId);
 
@@ -122,13 +198,15 @@ export default function Home() {
 
   return (
     <div className="flex h-dvh overflow-hidden" style={{ height: '100dvh' }}>
-      {/* Sidebar - desktop: always visible, fixed width */}
+      {/* Sidebar - desktop: always visible */}
       <div className="hidden md:flex md:flex-col w-72 shrink-0 min-h-0 border-r border-[var(--border)]">
         <AgentSidebar
           agents={agents}
           selectedAgentId={selectedAgentId}
           onSelectAgent={selectAgent}
           loading={loadingAgents}
+          unreadMap={unreadMap}
+          lastSeenMap={lastSeenMap}
         />
       </div>
 
@@ -140,11 +218,13 @@ export default function Home() {
             selectedAgentId={selectedAgentId}
             onSelectAgent={selectAgent}
             loading={loadingAgents}
+            unreadMap={unreadMap}
+            lastSeenMap={lastSeenMap}
           />
         </div>
       )}
 
-      {/* Mobile: sidebar overlay when agent is selected and sidebar toggled */}
+      {/* Mobile: sidebar overlay */}
       {selectedAgentId && sidebarOpen && (
         <div className="fixed inset-0 z-50 md:hidden">
           <div
@@ -158,12 +238,14 @@ export default function Home() {
               onSelectAgent={selectAgent}
               onClose={() => setSidebarOpen(false)}
               loading={loadingAgents}
+              unreadMap={unreadMap}
+              lastSeenMap={lastSeenMap}
             />
           </div>
         </div>
       )}
 
-      {/* Main content - hidden on mobile when no agent, always visible on desktop */}
+      {/* Main content */}
       <div className={`flex-1 min-w-0 flex flex-col ${!selectedAgentId ? 'hidden md:flex' : 'flex'}`}>
         {selectedAgent ? (
           <ChatView
@@ -183,7 +265,6 @@ export default function Home() {
 function EmptyState({ onOpenSidebar }: { onOpenSidebar: () => void }) {
   return (
     <div className="flex flex-col h-full">
-      {/* Mobile header */}
       <div className="flex items-center px-4 py-3 bg-[var(--bg-secondary)] border-b border-[var(--border)] md:hidden safe-top">
         <button
           onClick={onOpenSidebar}

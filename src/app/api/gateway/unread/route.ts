@@ -1,0 +1,147 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { isAuthenticatedFromRequest } from '@/lib/auth';
+import fs from 'node:fs';
+import path from 'node:path';
+
+export const dynamic = 'force-dynamic';
+
+const AGENTS_DIR = process.env.AGENTS_PATH || '/data/agents';
+
+// Agent IDs we care about
+const AGENT_IDS = [
+  'main', 'coding-agent', 'ops-monitor', 'pomamarketing',
+  'fatura-collector', 'mtm-tedarik', 'customer-relations', 'hr',
+  'vision', 'security', 'qa-tester', 'product-upload',
+  'seo-agent', 'personal-assistant', 'ads-merchant', 'investor',
+];
+
+function extractTextContent(content: any): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .filter((part: any) => part.type === 'text' && part.text)
+      .map((part: any) => part.text)
+      .join(' ');
+  }
+  return '';
+}
+
+function findSessionFile(agentId: string): string | null {
+  const sessionsDir = path.join(AGENTS_DIR, agentId, 'sessions');
+  const sessionKey = `agent:${agentId}:main`;
+  
+  // Try sessions.json mapping first
+  const sessionsJsonPath = path.join(sessionsDir, 'sessions.json');
+  if (fs.existsSync(sessionsJsonPath)) {
+    try {
+      const store = JSON.parse(fs.readFileSync(sessionsJsonPath, 'utf-8'));
+      const entry = store[sessionKey];
+      if (entry?.sessionId) {
+        const transcriptPath = path.join(sessionsDir, `${entry.sessionId}.jsonl`);
+        if (fs.existsSync(transcriptPath)) return transcriptPath;
+      }
+    } catch {}
+  }
+  
+  // Fallback: most recent .jsonl
+  if (!fs.existsSync(sessionsDir)) return null;
+  const files = fs.readdirSync(sessionsDir)
+    .filter(f => f.endsWith('.jsonl') && !f.endsWith('.lock'))
+    .map(f => ({
+      path: path.join(sessionsDir, f),
+      mtime: fs.statSync(path.join(sessionsDir, f)).mtimeMs,
+    }))
+    .sort((a, b) => b.mtime - a.mtime);
+  
+  return files[0]?.path || null;
+}
+
+interface AgentLatest {
+  lastTs: number;
+  lastAssistantTs: number;
+  preview: string;
+  previewRole: 'user' | 'assistant';
+}
+
+function getAgentLatest(agentId: string): AgentLatest | null {
+  const filePath = findSessionFile(agentId);
+  if (!filePath) return null;
+  
+  try {
+    const raw = fs.readFileSync(filePath, 'utf-8');
+    const lines = raw.split(/\r?\n/);
+    
+    let lastTs = 0;
+    let lastAssistantTs = 0;
+    let preview = '';
+    let previewRole: 'user' | 'assistant' = 'assistant';
+    
+    // Read from end for efficiency (last ~50 lines should be enough)
+    const startIdx = Math.max(0, lines.length - 50);
+    
+    for (let i = startIdx; i < lines.length; i++) {
+      const line = lines[i];
+      if (!line.trim()) continue;
+      
+      try {
+        const parsed = JSON.parse(line);
+        let msg = parsed;
+        if (parsed?.type === 'message' && parsed?.message) {
+          msg = parsed.message;
+        }
+        
+        const role = msg.role;
+        if (role !== 'user' && role !== 'assistant') continue;
+        
+        const text = extractTextContent(msg.content);
+        if (!text.trim()) continue;
+        
+        // Skip internal messages
+        if (text === 'NO_REPLY' || text === 'HEARTBEAT_OK') continue;
+        if (text.startsWith('Read HEARTBEAT.md')) continue;
+        if (text.startsWith('[cron:') || text.startsWith('[heartbeat')) continue;
+        if (text.startsWith('Pre-compaction memory flush')) continue;
+        if (text.startsWith('[System Message]')) continue;
+        
+        const ts = parsed.timestamp
+          ? (typeof parsed.timestamp === 'string' ? new Date(parsed.timestamp).getTime() : parsed.timestamp)
+          : msg.timestamp || 0;
+        
+        if (ts > lastTs) {
+          lastTs = ts;
+          preview = text.substring(0, 100);
+          previewRole = role;
+        }
+        
+        if (role === 'assistant' && ts > lastAssistantTs) {
+          lastAssistantTs = ts;
+        }
+      } catch {
+        // skip
+      }
+    }
+    
+    if (lastTs === 0) return null;
+    return { lastTs, lastAssistantTs, preview, previewRole };
+  } catch {
+    return null;
+  }
+}
+
+// GET /api/gateway/unread — returns latest message info for all agents
+export async function GET(req: NextRequest) {
+  if (!isAuthenticatedFromRequest(req)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  
+  const result: Record<string, AgentLatest> = {};
+  
+  for (const agentId of AGENT_IDS) {
+    const latest = getAgentLatest(agentId);
+    if (latest) {
+      result[agentId] = latest;
+    }
+  }
+  
+  return NextResponse.json(result);
+}
