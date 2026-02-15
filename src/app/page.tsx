@@ -15,6 +15,29 @@ export default function Home() {
   const [defaultAgentId, setDefaultAgentId] = useState<string>('main');
   const [mainKey, setMainKey] = useState<string>('');
 
+  // Handle agent selection with browser history
+  const selectAgent = useCallback((agentId: string | null) => {
+    if (agentId && !selectedAgentId) {
+      // Entering an agent — push a history entry so browser back returns to list
+      window.history.pushState({ view: 'chat', agentId }, '');
+    } else if (!agentId && selectedAgentId) {
+      // Going back to list — no push needed (already navigating back)
+    }
+    setSelectedAgentId(agentId);
+    setSidebarOpen(false);
+  }, [selectedAgentId]);
+
+  // Handle browser back button / swipe gesture
+  useEffect(() => {
+    function handlePopState(e: PopStateEvent) {
+      // When user presses back, go to agent list
+      setSelectedAgentId(null);
+      setSidebarOpen(false);
+    }
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
   // Check auth on mount
   useEffect(() => {
     fetch('/api/gateway/agents')
@@ -67,6 +90,16 @@ export default function Home() {
     return `agent:${agentId}:main`;
   }
 
+  // Navigate back to agent list (also pops browser history)
+  const goBack = useCallback(() => {
+    setSelectedAgentId(null);
+    setSidebarOpen(false);
+    // Pop the history entry we pushed when selecting agent
+    if (window.history.state?.view === 'chat') {
+      window.history.back();
+    }
+  }, []);
+
   const selectedAgent = agents.find(a => a.id === selectedAgentId);
 
   // Loading state
@@ -94,7 +127,7 @@ export default function Home() {
         <AgentSidebar
           agents={agents}
           selectedAgentId={selectedAgentId}
-          onSelectAgent={setSelectedAgentId}
+          onSelectAgent={selectAgent}
           loading={loadingAgents}
         />
       </div>
@@ -105,7 +138,7 @@ export default function Home() {
           <AgentSidebar
             agents={agents}
             selectedAgentId={selectedAgentId}
-            onSelectAgent={setSelectedAgentId}
+            onSelectAgent={selectAgent}
             loading={loadingAgents}
           />
         </div>
@@ -122,10 +155,7 @@ export default function Home() {
             <AgentSidebar
               agents={agents}
               selectedAgentId={selectedAgentId}
-              onSelectAgent={(id) => {
-                setSelectedAgentId(id);
-                setSidebarOpen(false);
-              }}
+              onSelectAgent={selectAgent}
               onClose={() => setSidebarOpen(false)}
               loading={loadingAgents}
             />
@@ -140,7 +170,7 @@ export default function Home() {
             agent={selectedAgent}
             sessionKey={getSessionKey(selectedAgent.id)}
             onOpenSidebar={() => setSidebarOpen(true)}
-            onBack={() => setSelectedAgentId(null)}
+            onBack={goBack}
           />
         ) : (
           <EmptyState onOpenSidebar={() => setSidebarOpen(true)} />

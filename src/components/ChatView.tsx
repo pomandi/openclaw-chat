@@ -546,15 +546,16 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
       )}
 
       {/* Header */}
-      <div className="flex items-center gap-3 px-4 py-3 bg-[var(--bg-secondary)] border-b border-[var(--border)] safe-top shrink-0">
-        {/* Mobile: back button — large touch target */}
+      <div className="flex items-center gap-2 px-3 py-2.5 bg-[var(--bg-secondary)] border-b border-[var(--border)] safe-top shrink-0">
+        {/* Back button — always visible, large touch target */}
         {onBack && (
           <button
             onClick={onBack}
-            className="flex items-center justify-center w-10 h-10 -ml-1 hover:bg-[var(--bg-hover)] rounded-xl transition-colors md:hidden active:scale-95"
+            className="flex items-center justify-center w-11 h-11 -ml-1 hover:bg-[var(--bg-hover)] rounded-xl transition-colors active:scale-95 shrink-0"
             title="Back to agents"
+            aria-label="Back to agents"
           >
-            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <svg className="w-7 h-7 text-[var(--accent)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
             </svg>
           </button>
@@ -573,7 +574,7 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
         {onOpenSidebar && (
           <button
             onClick={onOpenSidebar}
-            className="flex items-center justify-center w-10 h-10 hover:bg-[var(--bg-hover)] rounded-xl transition-colors md:hidden active:scale-95"
+            className="flex items-center justify-center w-11 h-11 hover:bg-[var(--bg-hover)] rounded-xl transition-colors md:hidden active:scale-95 shrink-0"
             title="Switch agent"
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
