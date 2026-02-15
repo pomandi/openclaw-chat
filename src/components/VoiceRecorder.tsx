@@ -1,14 +1,15 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
-import { useVoiceRecorder, RecorderState } from '@/lib/useVoiceRecorder';
+import { useState, useEffect, useRef } from 'react';
+import { useVoiceRecorder } from '@/lib/useVoiceRecorder';
 
 interface VoiceRecorderProps {
   onSend: (dataUrl: string, duration: number, mimeType: string) => void;
+  onCancel?: () => void;
   disabled?: boolean;
 }
 
-export default function VoiceRecorder({ onSend, disabled }: VoiceRecorderProps) {
+export default function VoiceRecorder({ onSend, onCancel, disabled }: VoiceRecorderProps) {
   const {
     state,
     duration,
@@ -22,8 +23,17 @@ export default function VoiceRecorder({ onSend, disabled }: VoiceRecorderProps) 
   } = useVoiceRecorder();
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const autoStarted = useRef(false);
 
-  // Draw waveform
+  // Auto-start recording on mount
+  useEffect(() => {
+    if (!autoStarted.current && state === 'idle') {
+      autoStarted.current = true;
+      startRecording();
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Draw waveform visualization during recording
   useEffect(() => {
     if (!canvasRef.current || !analyserData) return;
     const canvas = canvasRef.current;
@@ -37,12 +47,12 @@ export default function VoiceRecorder({ onSend, disabled }: VoiceRecorderProps) 
     const barCount = 24;
     const barWidth = (w / barCount) * 0.6;
     const gap = (w / barCount) * 0.4;
-    const step = Math.floor(analyserData.length / barCount);
+    const step = Math.max(1, Math.floor(analyserData.length / barCount));
 
     ctx.fillStyle = '#ef4444';
     for (let i = 0; i < barCount; i++) {
       const val = analyserData[i * step] / 255;
-      const barHeight = Math.max(3, val * h * 0.9);
+      const barHeight = Math.max(3, val * h * 0.85);
       const x = i * (barWidth + gap);
       const y = (h - barHeight) / 2;
       ctx.beginPath();
@@ -66,11 +76,13 @@ export default function VoiceRecorder({ onSend, disabled }: VoiceRecorderProps) 
     }
   }
 
-  function handleCancel() {
+  function handleDiscard() {
     if (state === 'recording') {
       cancelRecording();
+      onCancel?.();
     } else if (state === 'recorded') {
       clearRecording();
+      onCancel?.();
     }
   }
 
@@ -80,48 +92,56 @@ export default function VoiceRecorder({ onSend, disabled }: VoiceRecorderProps) 
     return `${m}:${s.toString().padStart(2, '0')}`;
   };
 
-  // Idle state — just the mic button
+  // ---- Idle / Error: show retry or back ----
   if (state === 'idle' || state === 'error') {
     return (
-      <div className="flex items-center">
+      <div className="relative flex items-center gap-2 flex-1">
+        <button
+          type="button"
+          onClick={() => onCancel?.()}
+          className="p-2 text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] rounded-full transition-colors shrink-0"
+          title="Back to text"
+        >
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+        {error && (
+          <span className="text-xs text-[var(--error)] truncate flex-1">{error}</span>
+        )}
         <button
           type="button"
           onClick={handleMicClick}
           disabled={disabled}
           className="p-2.5 text-[var(--text-muted)] hover:text-[var(--accent)] hover:bg-[var(--bg-hover)] rounded-full transition-colors shrink-0 disabled:opacity-30"
-          title="Record voice message"
+          title="Try again"
         >
           <MicIcon />
         </button>
-        {error && state === 'error' && (
-          <div className="absolute bottom-full mb-2 right-0 bg-[var(--error)]/90 text-white text-xs px-3 py-1.5 rounded-lg whitespace-nowrap max-w-[250px] truncate">
-            {error}
-          </div>
-        )}
       </div>
     );
   }
 
-  // Recording state
+  // ---- Recording state ----
   if (state === 'recording' || state === 'requesting') {
     return (
       <div className="flex items-center gap-2 flex-1 animate-fade-in">
-        {/* Cancel button */}
+        {/* Cancel */}
         <button
           type="button"
-          onClick={handleCancel}
+          onClick={handleDiscard}
           className="p-2 text-[var(--text-muted)] hover:text-[var(--error)] hover:bg-[var(--bg-hover)] rounded-full transition-colors shrink-0"
           title="Cancel recording"
         >
           <TrashIcon />
         </button>
 
-        {/* Recording indicator */}
+        {/* Recording indicator + waveform */}
         <div className="flex items-center gap-2 flex-1 min-w-0">
           <div className="w-2.5 h-2.5 bg-[var(--error)] rounded-full animate-pulse shrink-0" />
-          <span className="text-xs text-[var(--error)] font-mono shrink-0">{formatTime(duration)}</span>
-          
-          {/* Waveform */}
+          <span className="text-xs text-[var(--error)] font-mono shrink-0 min-w-[36px]">
+            {formatTime(duration)}
+          </span>
           <canvas
             ref={canvasRef}
             width={160}
@@ -130,7 +150,7 @@ export default function VoiceRecorder({ onSend, disabled }: VoiceRecorderProps) 
           />
         </div>
 
-        {/* Stop/Send button */}
+        {/* Stop */}
         <button
           type="button"
           onClick={stopRecording}
@@ -143,24 +163,24 @@ export default function VoiceRecorder({ onSend, disabled }: VoiceRecorderProps) 
     );
   }
 
-  // Recorded state — preview
+  // ---- Recorded state: preview + send ----
   if (state === 'recorded' && recording) {
     return (
       <div className="flex items-center gap-2 flex-1 animate-fade-in">
-        {/* Delete button */}
+        {/* Delete */}
         <button
           type="button"
-          onClick={handleCancel}
+          onClick={handleDiscard}
           className="p-2 text-[var(--text-muted)] hover:text-[var(--error)] hover:bg-[var(--bg-hover)] rounded-full transition-colors shrink-0"
           title="Discard recording"
         >
           <TrashIcon />
         </button>
 
-        {/* Mini audio preview */}
-        <RecordingPreview url={recording.url} duration={recording.duration} />
+        {/* Mini preview player */}
+        <MiniPlayer url={recording.url} duration={recording.duration} />
 
-        {/* Send button */}
+        {/* Send */}
         <button
           type="button"
           onClick={handleSend}
@@ -176,39 +196,18 @@ export default function VoiceRecorder({ onSend, disabled }: VoiceRecorderProps) 
   return null;
 }
 
-function RecordingPreview({ url, duration }: { url: string; duration: number }) {
+// ---- Mini player for recording preview ----
+function MiniPlayer({ url, duration }: { url: string; duration: number }) {
   const audioRef = useRef<HTMLAudioElement>(null);
-  const progressRef = useRef<HTMLDivElement>(null);
-  const [playing, setPlaying] = import('react').then ? undefined as any : undefined;
-
-  // Use state locally
-  const { useState: useStateLocal } = require('react');
-  // Actually let me use a different approach to avoid require
-  return <RecordingPreviewInner url={url} duration={duration} />;
-}
-
-function RecordingPreviewInner({ url, duration }: { url: string; duration: number }) {
-  const audioRef = useRef<HTMLAudioElement>(null);
-  const [playing, setPlaying] = (await import('react')).useState ? undefined as any : undefined;
-
-  // Fix: just use a simpler functional component with proper imports at top
-  return <SimplePreview url={url} duration={duration} />;
-}
-
-// Simpler approach
-import { useState as useStateHook } from 'react';
-
-function SimplePreview({ url, duration }: { url: string; duration: number }) {
-  const audioRef = useRef<HTMLAudioElement>(null);
-  const [isPlaying, setIsPlaying] = useStateHook(false);
-  const [progress, setProgress] = useStateHook(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [progress, setProgress] = useState(0);
 
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
 
-    const onTimeUpdate = () => {
-      if (audio.duration) {
+    const onTime = () => {
+      if (audio.duration && isFinite(audio.duration)) {
         setProgress(audio.currentTime / audio.duration);
       }
     };
@@ -217,10 +216,10 @@ function SimplePreview({ url, duration }: { url: string; duration: number }) {
       setProgress(0);
     };
 
-    audio.addEventListener('timeupdate', onTimeUpdate);
+    audio.addEventListener('timeupdate', onTime);
     audio.addEventListener('ended', onEnded);
     return () => {
-      audio.removeEventListener('timeupdate', onTimeUpdate);
+      audio.removeEventListener('timeupdate', onTime);
       audio.removeEventListener('ended', onEnded);
     };
   }, []);
@@ -232,25 +231,21 @@ function SimplePreview({ url, duration }: { url: string; duration: number }) {
       audio.pause();
       setIsPlaying(false);
     } else {
-      audio.play();
+      audio.play().catch(() => {});
       setIsPlaying(true);
     }
   }
 
-  const formatTime = (seconds: number) => {
-    const m = Math.floor(seconds / 60);
-    const s = Math.floor(seconds % 60);
-    return `${m}:${s.toString().padStart(2, '0')}`;
+  const formatTime = (s: number) => {
+    const m = Math.floor(s / 60);
+    const sec = Math.floor(s % 60);
+    return `${m}:${sec.toString().padStart(2, '0')}`;
   };
 
   return (
     <div className="flex items-center gap-2 flex-1 min-w-0 px-3 py-1.5 bg-[var(--bg-tertiary)] rounded-full">
       <audio ref={audioRef} src={url} preload="metadata" />
-      <button
-        type="button"
-        onClick={togglePlay}
-        className="text-[var(--accent)] shrink-0"
-      >
+      <button type="button" onClick={togglePlay} className="text-[var(--accent)] shrink-0">
         {isPlaying ? <PauseSmallIcon /> : <PlaySmallIcon />}
       </button>
       <div className="flex-1 h-1 bg-[var(--border)] rounded-full overflow-hidden">
@@ -266,8 +261,166 @@ function SimplePreview({ url, duration }: { url: string; duration: number }) {
   );
 }
 
+// ---- Audio player for chat bubbles (exported for use in ChatView) ----
+export function AudioBubblePlayer({
+  src,
+  duration,
+  isUser,
+}: {
+  src: string;
+  duration?: number;
+  isUser: boolean;
+}) {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [audioDuration, setAudioDuration] = useState(duration || 0);
 
-// --- Icons ---
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    const onTime = () => {
+      if (audio.duration && isFinite(audio.duration)) {
+        setProgress(audio.currentTime / audio.duration);
+        if (!duration) setAudioDuration(audio.duration);
+      }
+    };
+    const onEnded = () => {
+      setIsPlaying(false);
+      setProgress(0);
+    };
+    const onLoaded = () => {
+      if (audio.duration && isFinite(audio.duration) && !duration) {
+        setAudioDuration(audio.duration);
+      }
+    };
+
+    audio.addEventListener('timeupdate', onTime);
+    audio.addEventListener('ended', onEnded);
+    audio.addEventListener('loadedmetadata', onLoaded);
+    return () => {
+      audio.removeEventListener('timeupdate', onTime);
+      audio.removeEventListener('ended', onEnded);
+      audio.removeEventListener('loadedmetadata', onLoaded);
+    };
+  }, [duration]);
+
+  function togglePlay() {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (isPlaying) {
+      audio.pause();
+      setIsPlaying(false);
+    } else {
+      audio.play().catch(() => {});
+      setIsPlaying(true);
+    }
+  }
+
+  function handleProgressClick(e: React.MouseEvent<HTMLDivElement>) {
+    const audio = audioRef.current;
+    if (!audio || !audio.duration) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    audio.currentTime = pct * audio.duration;
+    setProgress(pct);
+  }
+
+  const formatTime = (s: number) => {
+    const m = Math.floor(s / 60);
+    const sec = Math.floor(s % 60);
+    return `${m}:${sec.toString().padStart(2, '0')}`;
+  };
+
+  const accentColor = isUser ? 'rgba(255,255,255,0.8)' : 'var(--accent)';
+  const trackColor = isUser ? 'rgba(255,255,255,0.2)' : 'var(--border)';
+  const textColor = isUser ? 'rgba(255,255,255,0.7)' : 'var(--text-muted)';
+
+  return (
+    <div className="flex items-center gap-2.5 min-w-[180px] max-w-[260px]">
+      <audio ref={audioRef} src={src} preload="metadata" />
+
+      {/* Play/Pause */}
+      <button
+        onClick={togglePlay}
+        className="w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition-colors"
+        style={{
+          backgroundColor: isUser ? 'rgba(255,255,255,0.15)' : 'var(--accent)/15',
+          color: accentColor,
+        }}
+      >
+        {isPlaying ? (
+          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M6 4h4v16H6zM14 4h4v16h-4z" />
+          </svg>
+        ) : (
+          <svg className="w-4 h-4 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M8 5v14l11-7z" />
+          </svg>
+        )}
+      </button>
+
+      {/* Progress + duration */}
+      <div className="flex-1 min-w-0">
+        {/* Waveform-style bars (decorative) + progress overlay */}
+        <div
+          className="relative h-6 flex items-center cursor-pointer"
+          onClick={handleProgressClick}
+        >
+          <WaveformBars progress={progress} accentColor={accentColor} trackColor={trackColor} />
+        </div>
+        <div className="flex justify-between mt-0.5">
+          <span className="text-[10px] font-mono" style={{ color: textColor }}>
+            {isPlaying && audioRef.current
+              ? formatTime(audioRef.current.currentTime)
+              : '0:00'}
+          </span>
+          <span className="text-[10px] font-mono" style={{ color: textColor }}>
+            {formatTime(audioDuration)}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Decorative waveform bars for audio bubble
+function WaveformBars({
+  progress,
+  accentColor,
+  trackColor,
+}: {
+  progress: number;
+  accentColor: string;
+  trackColor: string;
+}) {
+  // Pseudo-random bar heights for visual appeal
+  const bars = [0.3, 0.5, 0.7, 0.4, 0.9, 0.6, 0.8, 0.3, 0.7, 0.5, 0.9, 0.4, 0.6, 0.8, 0.3, 0.7, 0.5, 0.4, 0.8, 0.6, 0.3, 0.9, 0.5, 0.7, 0.4, 0.6, 0.8, 0.5];
+  const total = bars.length;
+
+  return (
+    <div className="flex items-center gap-[2px] w-full h-full">
+      {bars.map((h, i) => {
+        const filled = i / total < progress;
+        return (
+          <div
+            key={i}
+            className="flex-1 rounded-full transition-colors duration-75"
+            style={{
+              height: `${h * 100}%`,
+              backgroundColor: filled ? accentColor : trackColor,
+              minWidth: '2px',
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+
+// ---- SVG Icons ----
 
 function MicIcon() {
   return (

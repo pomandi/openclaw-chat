@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
     let content: string | MessageContent[] = message;
     if (attachments && attachments.length > 0) {
       const parts: MessageContent[] = [];
-      if (message.trim()) {
+      if (message.trim() && message !== '[Voice message]') {
         parts.push({ type: 'text', text: message });
       }
       for (const att of attachments) {
@@ -32,6 +32,28 @@ export async function POST(req: NextRequest) {
             type: 'image_url',
             image_url: { url: att.dataUrl, detail: 'auto' },
           });
+        } else if (att.type === 'audio' && att.dataUrl) {
+          // Send audio as input_audio in OpenAI multimodal format
+          // Extract base64 data from data URL
+          const base64Match = att.dataUrl.match(/^data:[^;]+;base64,(.+)$/);
+          if (base64Match) {
+            parts.push({
+              type: 'input_audio' as any,
+              input_audio: {
+                data: base64Match[1],
+                format: att.mimeType?.includes('wav') ? 'wav' : 
+                        att.mimeType?.includes('mp3') || att.mimeType?.includes('mpeg') ? 'mp3' : 
+                        att.mimeType?.includes('mp4') ? 'mp4' : 'wav',
+              },
+            } as any);
+          } else {
+            // Fallback: describe as text
+            const durationStr = att.duration ? ` ${Math.round(att.duration)}s` : '';
+            parts.push({
+              type: 'text',
+              text: `[Voice message${durationStr} - audio attached (${att.mimeType})]`,
+            });
+          }
         } else if (att.type === 'file') {
           // For non-image files, describe them as text
           parts.push({
@@ -39,6 +61,10 @@ export async function POST(req: NextRequest) {
             text: `[Attached file: ${att.name} (${att.mimeType}, ${Math.round(att.size / 1024)}KB)]`,
           });
         }
+      }
+      // If only audio and no text parts yet, add a description
+      if (parts.length > 0 && !parts.some(p => p.type === 'text')) {
+        parts.unshift({ type: 'text', text: '[Voice message - please listen to the attached audio]' });
       }
       content = parts.length > 0 ? parts : message;
     }

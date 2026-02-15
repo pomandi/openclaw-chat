@@ -47,9 +47,10 @@ export async function listAgents() {
 }
 
 export interface MessageContent {
-  type: 'text' | 'image_url';
+  type: 'text' | 'image_url' | 'input_audio';
   text?: string;
   image_url?: { url: string; detail?: string };
+  input_audio?: { data: string; format: string };
 }
 
 export async function streamChatMessage(

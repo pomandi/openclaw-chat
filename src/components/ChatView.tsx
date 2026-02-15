@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback, FormEvent } from 'react';
 import { Agent, ChatMessage, Attachment, getAgentEmoji, getAgentName, MAX_FILE_SIZE, SUPPORTED_IMAGE_TYPES, SUPPORTED_FILE_TYPES } from '@/lib/types';
 import MarkdownRenderer from './MarkdownRenderer';
+import VoiceRecorder, { AudioBubblePlayer } from './VoiceRecorder';
 
 interface ChatViewProps {
   agent: Agent;
@@ -20,6 +21,7 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar }: ChatViewP
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const [retryMessage, setRetryMessage] = useState<ChatMessage | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [voiceMode, setVoiceMode] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -74,7 +76,12 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar }: ChatViewP
         ...m,
         attachments: m.attachments?.map(a => ({
           ...a,
-          dataUrl: a.type === 'image' ? a.dataUrl.substring(0, 200) + '...' : '', // truncate for storage
+          // Truncate large data for localStorage — keep audio dataUrl intact up to 500KB for playback
+          dataUrl: a.type === 'audio'
+            ? (a.dataUrl.length < 700000 ? a.dataUrl : a.dataUrl.substring(0, 200) + '...')
+            : a.type === 'image'
+              ? a.dataUrl.substring(0, 200) + '...'
+              : '',
         })),
       }));
       localStorage.setItem(`chat:${sessionKey}`, JSON.stringify(toSave));
@@ -333,6 +340,125 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar }: ChatViewP
     }
   }
 
+  // Voice message handler
+  function handleVoiceSend(dataUrl: string, duration: number, mimeType: string) {
+    const audioAttachment: Attachment = {
+      id: `att_voice_${Date.now()}`,
+      type: 'audio',
+      name: `voice_${Date.now()}.${mimeType.includes('webm') ? 'webm' : mimeType.includes('ogg') ? 'ogg' : 'mp4'}`,
+      size: Math.round((dataUrl.length * 3) / 4), // approximate base64 size
+      mimeType,
+      dataUrl,
+      duration,
+    };
+
+    // Create and send the voice message
+    const userMsg: ChatMessage = {
+      id: `user_${Date.now()}`,
+      role: 'user',
+      content: '',
+      timestamp: Date.now(),
+      status: 'sending',
+      attachments: [audioAttachment],
+    };
+
+    setMessages(prev => [...prev, userMsg]);
+    setVoiceMode(false);
+    setSending(true);
+    setStreaming(false);
+    setStreamText('');
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const agentId = sessionKey.split(':')[1] || agent.id;
+
+    (async () => {
+      try {
+        const res = await fetch('/api/gateway/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            agentId,
+            message: '[Voice message]',
+            sessionKey,
+            attachments: [{
+              type: 'audio',
+              name: audioAttachment.name,
+              size: audioAttachment.size,
+              mimeType: audioAttachment.mimeType,
+              dataUrl: audioAttachment.dataUrl,
+              duration,
+            }],
+          }),
+          signal: controller.signal,
+        });
+
+        setMessages(prev => prev.map(m =>
+          m.id === userMsg.id ? { ...m, status: 'sent' as const } : m
+        ));
+
+        if (!res.ok) throw new Error(`Server error: ${res.status}`);
+        if (!res.body) throw new Error('No response stream');
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let accumulated = '';
+        let buffer = '';
+        setStreaming(true);
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const data = line.slice(6);
+              if (data === '[DONE]') continue;
+              try {
+                const json = JSON.parse(data);
+                const delta = json.choices?.[0]?.delta?.content;
+                if (delta) {
+                  accumulated += delta;
+                  setStreamText(accumulated);
+                }
+              } catch { /* */ }
+            }
+          }
+        }
+
+        if (accumulated.trim()) {
+          setMessages(prev => [...prev, {
+            id: `asst_${Date.now()}`,
+            role: 'assistant',
+            content: accumulated,
+            timestamp: Date.now(),
+            status: 'sent',
+          }]);
+        }
+      } catch (err: any) {
+        if (err.name === 'AbortError') return;
+        setMessages(prev => prev.map(m =>
+          m.id === userMsg.id ? { ...m, status: 'error' as const } : m
+        ));
+        setMessages(prev => [...prev, {
+          id: `err_${Date.now()}`,
+          role: 'system',
+          content: `Failed to send: ${err.message}`,
+          timestamp: Date.now(),
+          status: 'error',
+        }]);
+      } finally {
+        setSending(false);
+        setStreaming(false);
+        setStreamText('');
+        abortRef.current = null;
+        scrollToBottom(true);
+      }
+    })();
+  }
+
   return (
     <div
       className="flex flex-col h-full bg-[var(--bg-primary)]"
@@ -490,57 +616,87 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar }: ChatViewP
 
       {/* Input */}
       <div className="shrink-0 px-4 py-3 bg-[var(--bg-secondary)] border-t border-[var(--border)] safe-bottom">
-        <form onSubmit={handleSend} className="flex items-end gap-2">
-          {/* Attachment button */}
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="p-2.5 text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] rounded-full transition-colors shrink-0"
-            title="Attach file"
-          >
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-            </svg>
-          </button>
-
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            accept={SUPPORTED_FILE_TYPES.join(',')}
-            onChange={(e) => handleFileSelect(e.target.files)}
-            className="hidden"
-          />
-
-          <textarea
-            ref={inputRef}
-            value={input}
-            onChange={handleInputChange}
-            onKeyDown={handleKeyDown}
-            onPaste={handlePaste}
-            placeholder={`Message ${agentName}...`}
-            rows={1}
-            className="flex-1 px-4 py-2.5 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded-2xl text-sm text-white placeholder-[var(--text-muted)] focus:outline-none focus:border-[var(--accent)] transition-colors resize-none"
-            disabled={sending}
-          />
-
-          <button
-            type="submit"
-            disabled={(!input.trim() && attachments.length === 0) || sending}
-            className="p-2.5 bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white rounded-full transition-colors disabled:opacity-30 disabled:cursor-not-allowed shrink-0"
-          >
-            {sending ? (
-              <svg className="w-5 h-5 animate-spin" viewBox="0 0 24 24" fill="none">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-              </svg>
-            ) : (
+        {voiceMode ? (
+          /* Voice recording mode - replaces normal input */
+          <div className="flex items-center gap-2">
+            <VoiceRecorder
+              onSend={handleVoiceSend}
+              onCancel={() => setVoiceMode(false)}
+              disabled={sending}
+            />
+          </div>
+        ) : (
+          /* Normal text input mode */
+          <form onSubmit={handleSend} className="flex items-end gap-2">
+            {/* Attachment button */}
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="p-2.5 text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] rounded-full transition-colors shrink-0"
+              title="Attach file"
+            >
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19V5m0 0l-7 7m7-7l7 7" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
               </svg>
+            </button>
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept={SUPPORTED_FILE_TYPES.join(',')}
+              onChange={(e) => handleFileSelect(e.target.files)}
+              className="hidden"
+            />
+
+            <textarea
+              ref={inputRef}
+              value={input}
+              onChange={handleInputChange}
+              onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
+              placeholder={`Message ${agentName}...`}
+              rows={1}
+              className="flex-1 px-4 py-2.5 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded-2xl text-sm text-white placeholder-[var(--text-muted)] focus:outline-none focus:border-[var(--accent)] transition-colors resize-none"
+              disabled={sending}
+            />
+
+            {/* Show send button when there's text/attachments, mic button otherwise */}
+            {(input.trim() || attachments.length > 0) ? (
+              <button
+                type="submit"
+                disabled={sending}
+                className="p-2.5 bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white rounded-full transition-colors disabled:opacity-30 disabled:cursor-not-allowed shrink-0"
+              >
+                {sending ? (
+                  <svg className="w-5 h-5 animate-spin" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                ) : (
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19V5m0 0l-7 7m7-7l7 7" />
+                  </svg>
+                )}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setVoiceMode(true)}
+                disabled={sending}
+                className="p-2.5 text-[var(--text-muted)] hover:text-[var(--accent)] hover:bg-[var(--bg-hover)] rounded-full transition-colors disabled:opacity-30 shrink-0"
+                title="Record voice message"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 10v2a7 7 0 01-14 0v-2" />
+                  <line x1="12" y1="19" x2="12" y2="23" />
+                  <line x1="8" y1="23" x2="16" y2="23" />
+                </svg>
+              </button>
             )}
-          </button>
-        </form>
+          </form>
+        )}
       </div>
     </div>
   );
@@ -575,7 +731,22 @@ function MessageBubble({ message, agentEmoji }: { message: ChatMessage; agentEmo
         {message.attachments && message.attachments.length > 0 && (
           <div className={`flex flex-wrap gap-2 mb-1 ${isUser ? 'justify-end' : 'justify-start'}`}>
             {message.attachments.map(att => (
-              att.type === 'image' && att.previewUrl ? (
+              att.type === 'audio' ? (
+                <div
+                  key={att.id}
+                  className={`px-3 py-2.5 rounded-2xl ${
+                    isUser
+                      ? 'bg-[var(--bubble-user)] rounded-tr-md'
+                      : 'bg-[var(--bubble-assistant)] rounded-tl-md'
+                  }`}
+                >
+                  <AudioBubblePlayer
+                    src={att.dataUrl}
+                    duration={att.duration}
+                    isUser={isUser}
+                  />
+                </div>
+              ) : att.type === 'image' && att.previewUrl ? (
                 <img
                   key={att.id}
                   src={att.previewUrl}
