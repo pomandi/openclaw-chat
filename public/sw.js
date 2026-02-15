@@ -1,4 +1,4 @@
-const CACHE_NAME = 'openclaw-chat-v3';
+const CACHE_NAME = 'openclaw-chat-v5';
 const STATIC_ASSETS = [
   '/',
   '/icon-192.png',

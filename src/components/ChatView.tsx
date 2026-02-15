@@ -212,8 +212,16 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
     
     if (!text && msgAttachments.length === 0) return;
     
-    // If already sending, allow force-reset after 90 seconds (stuck state recovery)
+    // If already sending, allow force-reset by tapping send again
     if (sending) {
+      // Force cancel current request and allow new one
+      if (abortRef.current) {
+        console.warn('[Chat] Force-cancelling stuck request');
+        abortRef.current.abort();
+      }
+      setSending(false);
+      setStreaming(false);
+      setStreamText('');
       return;
     }
 
@@ -250,14 +258,14 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
     const controller = new AbortController();
     abortRef.current = controller;
 
-    // Safety timeout: auto-reset sending state after 120s to prevent stuck UI
+    // Safety timeout: auto-reset sending state after 60s to prevent stuck UI
     const safetyTimeout = setTimeout(() => {
-      console.warn('[Chat] Safety timeout: resetting sending state after 120s');
+      console.warn('[Chat] Safety timeout: resetting sending state after 60s');
       setSending(false);
       setStreaming(false);
       setStreamText('');
       controller.abort();
-    }, 120_000);
+    }, 60_000);
 
     try {
       const res = await fetch('/api/gateway/chat', {
@@ -284,7 +292,10 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
       ));
 
       if (!res.ok) {
-        throw new Error(`Server error: ${res.status}`);
+        let errBody = '';
+        try { errBody = await res.text(); } catch {}
+        const parsed = errBody ? (() => { try { return JSON.parse(errBody); } catch { return null; } })() : null;
+        throw new Error(parsed?.error || `Server error: ${res.status}`);
       }
 
       if (!res.body) {
@@ -338,9 +349,13 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
       }
 
     } catch (err: any) {
-      if (err.name === 'AbortError') return;
-      
       console.error('[Chat] send error:', err);
+      
+      // For abort errors, check if we got any streamed content
+      if (err.name === 'AbortError') {
+        // If we had partial content, still save it
+        // Don't return silently — show timeout message
+      }
       
       // Mark user message as error
       setMessages(prev => prev.map(m =>
@@ -349,10 +364,13 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
       setRetryMessage(userMsg);
 
       // Add error message
+      const errorText = err.name === 'AbortError' 
+        ? 'Request timed out. Tap retry to try again.'
+        : `Failed to send: ${err.message}`;
       setMessages(prev => [...prev, {
         id: `err_${Date.now()}`,
         role: 'system',
-        content: `Failed to send: ${err.message}`,
+        content: errorText,
         timestamp: Date.now(),
         status: 'error',
       }]);
@@ -610,11 +628,13 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
           </button>
         )}
 
-        {sending && (
+        {sending ? (
           <div className="text-xs text-[var(--accent)] flex items-center gap-1.5 shrink-0">
             <div className="w-2 h-2 bg-[var(--accent)] rounded-full animate-pulse" />
             <span className="hidden sm:inline">Processing...</span>
           </div>
+        ) : (
+          <div className="text-[9px] text-[var(--text-muted)]/50 shrink-0 select-none">v5</div>
         )}
       </div>
 
