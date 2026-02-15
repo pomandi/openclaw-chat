@@ -91,10 +91,10 @@ async function connect(): Promise<WebSocket> {
                 minProtocol: PROTOCOL_VERSION,
                 maxProtocol: PROTOCOL_VERSION,
                 client: {
-                  id: 'openclaw-chat',
+                  id: 'webchat-ui',
                   version: '1.0.0',
-                  platform: 'web',
-                  mode: 'operator',
+                  platform: 'linux',
+                  mode: 'ui',
                 },
                 role: 'operator',
                 scopes: ['operator.read', 'operator.write'],
