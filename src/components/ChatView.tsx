@@ -508,7 +508,6 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar }: ChatViewP
             type="file"
             multiple
             accept={SUPPORTED_FILE_TYPES.join(',')}
-            capture="environment"
             onChange={(e) => handleFileSelect(e.target.files)}
             className="hidden"
           />

@@ -19,12 +19,13 @@ export interface AgentsListResult {
 
 export interface Attachment {
   id: string;
-  type: 'image' | 'file';
+  type: 'image' | 'file' | 'audio';
   name: string;
   size: number;
   mimeType: string;
   dataUrl: string; // base64 data URL
   previewUrl?: string; // for images, a thumbnail
+  duration?: number; // for audio, in seconds
 }
 
 export interface ChatMessage {
@@ -81,4 +82,5 @@ export const MAX_FILE_SIZE = 10 * 1024 * 1024;
 
 // Supported file types
 export const SUPPORTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+export const SUPPORTED_AUDIO_TYPES = ['audio/webm', 'audio/ogg', 'audio/mp4', 'audio/mpeg', 'audio/wav'];
 export const SUPPORTED_FILE_TYPES = [...SUPPORTED_IMAGE_TYPES, 'application/pdf'];
