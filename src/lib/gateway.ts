@@ -1,257 +1,100 @@
-// OpenClaw Gateway WebSocket Client (server-side)
-// Used by API routes to proxy requests to the gateway
+// OpenClaw Gateway HTTP Client (server-side)
+// Uses the HTTP API endpoints instead of WebSocket for simplicity
 
-import { WebSocket } from 'ws';
-
-const GATEWAY_URL = process.env.OPENCLAW_GATEWAY_URL || 'ws://127.0.0.1:18789';
+const GATEWAY_HTTP_URL = process.env.OPENCLAW_GATEWAY_HTTP_URL || 'http://127.0.0.1:18789';
 const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN || '';
-const PROTOCOL_VERSION = 3;
 
-let wsConnection: WebSocket | null = null;
-let connectionPromise: Promise<WebSocket> | null = null;
-let messageId = 0;
-const pendingRequests = new Map<string, { resolve: (v: any) => void; reject: (e: any) => void }>();
-const eventListeners = new Map<string, Set<(payload: any) => void>>();
-
-function generateId(): string {
-  return `req_${++messageId}_${Date.now()}`;
+async function gatewayFetch(path: string, options: RequestInit = {}): Promise<Response> {
+  const url = `${GATEWAY_HTTP_URL}${path}`;
+  const res = await fetch(url, {
+    ...options,
+    headers: {
+      'Authorization': `Bearer ${GATEWAY_TOKEN}`,
+      'Content-Type': 'application/json',
+      ...(options.headers || {}),
+    },
+  });
+  return res;
 }
 
-function generateDeviceId(): string {
-  return 'openclaw-chat-' + Math.random().toString(36).slice(2, 10);
-}
+// Agent info from config (since we know the agents from openclaw.json)
+const AGENTS_CONFIG = [
+  { id: 'main', name: 'CEO Agent' },
+  { id: 'coding-agent', name: 'Poma Coding Agent' },
+  { id: 'ops-monitor', name: 'Ops Monitor' },
+  { id: 'pomamarketing', name: 'Poma Marketing' },
+  { id: 'fatura-collector', name: 'Fatura Collector' },
+  { id: 'mtm-tedarik', name: 'MTM Tedarik Yonetimi' },
+  { id: 'customer-relations', name: 'Poma CRM' },
+  { id: 'hr', name: 'Poma HR' },
+  { id: 'vision', name: 'Poma Vision' },
+  { id: 'security', name: 'Poma Security' },
+  { id: 'qa-tester', name: 'Poma QA Tester' },
+  { id: 'product-upload', name: 'Product Upload' },
+  { id: 'seo-agent', name: 'Poma SEO Agent' },
+  { id: 'personal-assistant', name: 'Personal Assistant' },
+  { id: 'ads-merchant', name: 'Ads & Merchant Center' },
+  { id: 'investor', name: 'Investment Tracker' },
+];
 
-export function onGatewayEvent(event: string, handler: (payload: any) => void): () => void {
-  if (!eventListeners.has(event)) {
-    eventListeners.set(event, new Set());
-  }
-  eventListeners.get(event)!.add(handler);
-  return () => {
-    eventListeners.get(event)?.delete(handler);
+export async function listAgents() {
+  // Return the agents list from config
+  // The gateway doesn't expose a simple HTTP endpoint for this
+  return {
+    defaultId: 'main',
+    mainKey: 'agent:main:main',
+    scope: 'global',
+    agents: AGENTS_CONFIG,
   };
 }
 
-function handleGatewayMessage(data: string) {
+export async function sendChatMessage(agentId: string, message: string, sessionKey?: string): Promise<ReadableStream<Uint8Array> | null> {
+  const res = await gatewayFetch('/v1/chat/completions', {
+    method: 'POST',
+    body: JSON.stringify({
+      model: `openclaw:${agentId}`,
+      stream: true,
+      messages: [{ role: 'user', content: message }],
+      ...(sessionKey ? { user: sessionKey } : {}),
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Gateway error ${res.status}: ${text}`);
+  }
+
+  return res.body;
+}
+
+export async function sendChatMessageSync(agentId: string, message: string, sessionKey?: string): Promise<string> {
+  const res = await gatewayFetch('/v1/chat/completions', {
+    method: 'POST',
+    body: JSON.stringify({
+      model: `openclaw:${agentId}`,
+      stream: false,
+      messages: [{ role: 'user', content: message }],
+      ...(sessionKey ? { user: sessionKey } : {}),
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Gateway error ${res.status}: ${text}`);
+  }
+
+  const data = await res.json();
+  return data.choices?.[0]?.message?.content || '';
+}
+
+export async function checkGatewayHealth(): Promise<boolean> {
   try {
-    const frame = JSON.parse(data);
-    
-    if (frame.type === 'res') {
-      const pending = pendingRequests.get(frame.id);
-      if (pending) {
-        pendingRequests.delete(frame.id);
-        if (frame.ok) {
-          pending.resolve(frame.payload);
-        } else {
-          pending.reject(new Error(frame.error?.message || 'Gateway request failed'));
-        }
-      }
-    } else if (frame.type === 'event') {
-      const listeners = eventListeners.get(frame.event);
-      if (listeners) {
-        for (const handler of listeners) {
-          handler(frame.payload);
-        }
-      }
-      // Also emit to wildcard listeners
-      const allListeners = eventListeners.get('*');
-      if (allListeners) {
-        for (const handler of allListeners) {
-          handler({ event: frame.event, payload: frame.payload });
-        }
-      }
-    }
-  } catch (e) {
-    console.error('[Gateway] Failed to parse message:', e);
+    const res = await fetch(`${GATEWAY_HTTP_URL}/`, {
+      method: 'GET',
+      signal: AbortSignal.timeout(5000),
+    });
+    return res.ok || res.status === 200;
+  } catch {
+    return false;
   }
-}
-
-async function connect(): Promise<WebSocket> {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(GATEWAY_URL);
-    let connected = false;
-
-    ws.on('open', () => {
-      // Wait for challenge, then send connect
-    });
-
-    ws.on('message', (raw) => {
-      const data = raw.toString();
-      
-      if (!connected) {
-        try {
-          const frame = JSON.parse(data);
-          
-          // Handle challenge
-          if (frame.type === 'event' && frame.event === 'connect.challenge') {
-            const connectReq = {
-              type: 'req',
-              id: generateId(),
-              method: 'connect',
-              params: {
-                minProtocol: PROTOCOL_VERSION,
-                maxProtocol: PROTOCOL_VERSION,
-                client: {
-                  id: 'gateway-client',
-                  version: '1.0.0',
-                  platform: 'linux',
-                  mode: 'backend',
-                },
-                role: 'operator',
-                scopes: ['operator.read', 'operator.write'],
-                caps: [],
-                commands: [],
-                permissions: {},
-                auth: { token: GATEWAY_TOKEN },
-                locale: 'en-US',
-                userAgent: 'openclaw-chat/1.0.0',
-              },
-            };
-            ws.send(JSON.stringify(connectReq));
-            return;
-          }
-          
-          // Handle hello-ok
-          if (frame.type === 'res' && frame.ok && frame.payload?.type === 'hello-ok') {
-            connected = true;
-            resolve(ws);
-            return;
-          }
-          
-          // Handle auth failure
-          if (frame.type === 'res' && !frame.ok) {
-            reject(new Error(frame.error?.message || 'Connection failed'));
-            ws.close();
-            return;
-          }
-        } catch (e) {
-          // Skip non-JSON during handshake
-        }
-      } else {
-        handleGatewayMessage(data);
-      }
-    });
-
-    ws.on('error', (err) => {
-      console.error('[Gateway] WS error:', err.message);
-      if (!connected) {
-        reject(err);
-      }
-    });
-
-    ws.on('close', () => {
-      if (ws === wsConnection) {
-        wsConnection = null;
-        connectionPromise = null;
-      }
-      // Reject all pending requests
-      for (const [id, pending] of pendingRequests) {
-        pending.reject(new Error('Connection closed'));
-        pendingRequests.delete(id);
-      }
-    });
-
-    // Timeout
-    setTimeout(() => {
-      if (!connected) {
-        ws.close();
-        reject(new Error('Connection timeout'));
-      }
-    }, 10000);
-  });
-}
-
-export async function getConnection(): Promise<WebSocket> {
-  if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {
-    return wsConnection;
-  }
-
-  if (connectionPromise) {
-    return connectionPromise;
-  }
-
-  connectionPromise = connect().then((ws) => {
-    wsConnection = ws;
-    return ws;
-  }).catch((err) => {
-    connectionPromise = null;
-    throw err;
-  });
-
-  return connectionPromise;
-}
-
-export async function gatewayRequest<T = any>(method: string, params: Record<string, any> = {}): Promise<T> {
-  const ws = await getConnection();
-  const id = generateId();
-  
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      pendingRequests.delete(id);
-      reject(new Error(`Request timeout: ${method}`));
-    }, 30000);
-
-    pendingRequests.set(id, {
-      resolve: (v) => {
-        clearTimeout(timeout);
-        resolve(v);
-      },
-      reject: (e) => {
-        clearTimeout(timeout);
-        reject(e);
-      },
-    });
-
-    ws.send(JSON.stringify({
-      type: 'req',
-      id,
-      method,
-      params,
-    }));
-  });
-}
-
-// Convenience methods
-
-export async function listAgents() {
-  return gatewayRequest('agents.list');
-}
-
-export async function listSessions(params: {
-  agentId?: string;
-  limit?: number;
-  includeDerivedTitles?: boolean;
-  includeLastMessage?: boolean;
-} = {}) {
-  return gatewayRequest('sessions.list', {
-    limit: 50,
-    includeDerivedTitles: true,
-    includeLastMessage: true,
-    ...params,
-  });
-}
-
-export async function getChatHistory(sessionKey: string, limit = 100) {
-  return gatewayRequest('chat.history', { sessionKey, limit });
-}
-
-export async function sendChatMessage(sessionKey: string, message: string) {
-  const idempotencyKey = `chat_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-  return gatewayRequest('chat.send', {
-    sessionKey,
-    message,
-    deliver: true,
-    idempotencyKey,
-  });
-}
-
-export async function abortChat(sessionKey: string, runId?: string) {
-  return gatewayRequest('chat.abort', { sessionKey, ...(runId ? { runId } : {}) });
-}
-
-export async function getAgentIdentity(agentId: string) {
-  return gatewayRequest('agent.identity', { agentId });
-}
-
-export async function getSnapshot() {
-  return gatewayRequest('snapshot');
 }
