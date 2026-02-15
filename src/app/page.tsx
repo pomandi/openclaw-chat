@@ -89,7 +89,7 @@ export default function Home() {
 
   return (
     <div className="flex h-screen overflow-hidden">
-      {/* Sidebar - desktop */}
+      {/* Sidebar - desktop: always visible */}
       <div className="hidden md:flex w-72 shrink-0 border-r border-[var(--border)]">
         <AgentSidebar
           agents={agents}
@@ -99,14 +99,23 @@ export default function Home() {
         />
       </div>
 
-      {/* Sidebar - mobile overlay */}
-      {sidebarOpen && (
+      {/* Sidebar - mobile: full screen when no agent selected, overlay when agent selected */}
+      {!selectedAgentId ? (
+        <div className="flex-1 md:hidden">
+          <AgentSidebar
+            agents={agents}
+            selectedAgentId={selectedAgentId}
+            onSelectAgent={setSelectedAgentId}
+            loading={loadingAgents}
+          />
+        </div>
+      ) : sidebarOpen ? (
         <div className="fixed inset-0 z-50 md:hidden">
           <div
             className="absolute inset-0 bg-black/50"
             onClick={() => setSidebarOpen(false)}
           />
-          <div className="absolute left-0 top-0 bottom-0 w-72 animate-fade-in">
+          <div className="absolute left-0 top-0 bottom-0 w-80 animate-fade-in">
             <AgentSidebar
               agents={agents}
               selectedAgentId={selectedAgentId}
@@ -116,15 +125,16 @@ export default function Home() {
             />
           </div>
         </div>
-      )}
+      ) : null}
 
       {/* Main content */}
-      <div className="flex-1 min-w-0">
+      <div className={`flex-1 min-w-0 ${!selectedAgentId ? 'hidden md:flex' : 'flex'}`}>
         {selectedAgent ? (
           <ChatView
             agent={selectedAgent}
             sessionKey={getSessionKey(selectedAgent.id)}
             onOpenSidebar={() => setSidebarOpen(true)}
+            onBack={() => setSelectedAgentId(null)}
           />
         ) : (
           <EmptyState onOpenSidebar={() => setSidebarOpen(true)} />

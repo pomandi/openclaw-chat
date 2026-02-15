@@ -9,9 +9,10 @@ interface ChatViewProps {
   agent: Agent;
   sessionKey: string;
   onOpenSidebar?: () => void;
+  onBack?: () => void;
 }
 
-export default function ChatView({ agent, sessionKey, onOpenSidebar }: ChatViewProps) {
+export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: ChatViewProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -558,10 +559,25 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar }: ChatViewP
 
       {/* Header */}
       <div className="flex items-center gap-3 px-4 py-3 bg-[var(--bg-secondary)] border-b border-[var(--border)] safe-top shrink-0">
+        {/* Mobile: back button (goes to agent list) */}
+        {onBack && (
+          <button
+            onClick={onBack}
+            className="p-2 -ml-2 hover:bg-[var(--bg-hover)] rounded-lg transition-colors md:hidden"
+            title="Back to agents"
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+          </button>
+        )}
+        
+        {/* Mobile: agent list toggle (hamburger) */}
         {onOpenSidebar && (
           <button
             onClick={onOpenSidebar}
             className="p-2 -ml-2 hover:bg-[var(--bg-hover)] rounded-lg transition-colors md:hidden"
+            title="Switch agent"
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
