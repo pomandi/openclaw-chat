@@ -1,36 +1,55 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# OpenClaw Chat
 
-## Getting Started
+A personal chat application (PWA) for communicating with OpenClaw AI agents. Built as a Telegram replacement for the CEO.
 
-First, run the development server:
+## Features
+
+- 🤖 **Agent List** — Browse and select from all OpenClaw agents
+- 💬 **Chat Interface** — Telegram-style bubble UI with real-time streaming
+- 📱 **PWA Support** — Install on mobile, full-screen standalone mode
+- 🌙 **Dark Theme** — Sleek dark UI with blue accents
+- 📱 **Responsive** — Mobile-first design, two-column on desktop
+- 🔐 **Password Auth** — Simple password protection (Cloudflare Zero Trust ready)
+
+## Tech Stack
+
+- **Framework:** Next.js 16 (App Router)
+- **Language:** TypeScript
+- **Styling:** Tailwind CSS
+- **API:** OpenClaw Gateway WebSocket Protocol v3
+- **Deploy:** Coolify (Docker)
+
+## Development
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Environment Variables
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Copy `.env.example` to `.env.local` and fill in:
 
-## Learn More
+- `OPENCLAW_GATEWAY_URL` — WebSocket URL to OpenClaw Gateway
+- `OPENCLAW_GATEWAY_TOKEN` — Gateway auth token
+- `APP_PASSWORD` — Login password
 
-To learn more about Next.js, take a look at the following resources:
+## Deployment
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Deployed via Coolify on `app.pomandi.com`.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+npm run build
+```
 
-## Deploy on Vercel
+Uses `output: "standalone"` for Docker-optimized builds.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Architecture
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```
+Browser ↔ Next.js API Routes ↔ OpenClaw Gateway (WS)
+```
+
+The Next.js server acts as a proxy, maintaining a persistent WebSocket connection to the OpenClaw Gateway. Browser clients communicate via REST API + SSE for real-time updates.
