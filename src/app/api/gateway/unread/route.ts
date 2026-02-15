@@ -149,6 +149,59 @@ function getAgentLatest(agentId: string): AgentLatest | null {
   }
 }
 
+// Check cron sessions for latest message (last 24h)
+function getCronLatest(agentId: string): AgentLatest | null {
+  const sessionsDir = path.join(AGENTS_DIR, agentId, 'sessions');
+  const sessionsJsonPath = path.join(sessionsDir, 'sessions.json');
+  if (!fs.existsSync(sessionsJsonPath)) return null;
+
+  const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+  let bestTs = 0;
+  let bestPreview = '';
+
+  try {
+    const store = JSON.parse(fs.readFileSync(sessionsJsonPath, 'utf-8'));
+    for (const [key, entry] of Object.entries(store) as [string, any][]) {
+      if (!key.includes(':cron:') || key.includes(':run:')) continue;
+      const updatedAt = entry?.updatedAt || 0;
+      if (updatedAt < oneDayAgo || updatedAt <= bestTs) continue;
+      if (!entry?.sessionId) continue;
+
+      const transcriptPath = path.join(sessionsDir, `${entry.sessionId}.jsonl`);
+      if (!fs.existsSync(transcriptPath)) continue;
+
+      // Read last few lines to get the final assistant message
+      try {
+        const lines = readTailLines(transcriptPath, 8192);
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const parsed = JSON.parse(line);
+            let msg = parsed;
+            if (parsed?.type === 'message' && parsed?.message) msg = parsed.message;
+            if (msg.role !== 'assistant') continue;
+            const text = extractTextContent(msg.content);
+            if (!text.trim() || text === 'NO_REPLY' || text === 'HEARTBEAT_OK') continue;
+
+            const ts = parsed.timestamp
+              ? (typeof parsed.timestamp === 'string' ? new Date(parsed.timestamp).getTime() : parsed.timestamp)
+              : msg.timestamp || 0;
+
+            if (ts > bestTs) {
+              bestTs = ts;
+              const label = entry?.label || 'Cron';
+              bestPreview = `📋 ${label}: ${text.substring(0, 80)}`;
+            }
+          } catch {}
+        }
+      } catch {}
+    }
+  } catch {}
+
+  if (bestTs === 0) return null;
+  return { lastTs: bestTs, lastAssistantTs: bestTs, preview: bestPreview, previewRole: 'assistant' };
+}
+
 // GET /api/gateway/unread — returns latest message info for all agents
 export async function GET(req: NextRequest) {
   if (!isAuthenticatedFromRequest(req)) {
@@ -158,9 +211,16 @@ export async function GET(req: NextRequest) {
   const result: Record<string, AgentLatest> = {};
   
   for (const agentId of AGENT_IDS) {
-    const latest = getAgentLatest(agentId);
-    if (latest) {
-      result[agentId] = latest;
+    const mainLatest = getAgentLatest(agentId);
+    const cronLatest = getCronLatest(agentId);
+
+    // Use whichever is more recent
+    if (mainLatest && cronLatest) {
+      result[agentId] = cronLatest.lastTs > mainLatest.lastTs ? cronLatest : mainLatest;
+    } else if (mainLatest) {
+      result[agentId] = mainLatest;
+    } else if (cronLatest) {
+      result[agentId] = cronLatest;
     }
   }
   

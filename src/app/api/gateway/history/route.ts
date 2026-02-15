@@ -97,6 +97,87 @@ function findSessionFile(agentId: string, sessionKey: string): string | null {
   return files[0]?.path || null;
 }
 
+// Find cron session files for an agent (last 24h, max 10 sessions)
+function findCronSessionFiles(agentId: string): { path: string; label: string }[] {
+  const sessionsDir = path.join(AGENTS_DIR, agentId, 'sessions');
+  const sessionsJsonPath = path.join(sessionsDir, 'sessions.json');
+  if (!fs.existsSync(sessionsJsonPath)) return [];
+
+  const results: { path: string; label: string; updatedAt: number }[] = [];
+  const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+
+  try {
+    const store = JSON.parse(fs.readFileSync(sessionsJsonPath, 'utf-8'));
+    for (const [key, entry] of Object.entries(store) as [string, any][]) {
+      // Match cron sessions: agent:{id}:cron:{cronId} (not :run: sub-sessions)
+      if (!key.includes(':cron:') || key.includes(':run:')) continue;
+      const updatedAt = entry?.updatedAt || 0;
+      if (updatedAt < oneDayAgo) continue;
+      if (!entry?.sessionId) continue;
+
+      const transcriptPath = path.join(sessionsDir, `${entry.sessionId}.jsonl`);
+      if (!fs.existsSync(transcriptPath)) continue;
+
+      const label = entry?.label || key.split(':cron:')[1]?.substring(0, 8) || 'cron';
+      results.push({ path: transcriptPath, label, updatedAt });
+    }
+  } catch {}
+
+  return results
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .slice(0, 10)
+    .map(r => ({ path: r.path, label: r.label }));
+}
+
+// Parse cron transcript — extract only the final assistant response (the report)
+function parseCronTranscript(filePath: string, label: string): any[] {
+  if (!fs.existsSync(filePath)) return [];
+
+  // Read only last 16KB for efficiency
+  const fd = fs.openSync(filePath, 'r');
+  const stat = fs.fstatSync(fd);
+  const readSize = Math.min(stat.size, 16384);
+  const buffer = Buffer.alloc(readSize);
+  fs.readSync(fd, buffer, 0, readSize, stat.size - readSize);
+  fs.closeSync(fd);
+
+  const raw = buffer.toString('utf-8');
+  const lines = raw.split(/\r?\n/);
+  // Skip potentially partial first line from the cut
+  if (stat.size > readSize) lines.shift();
+
+  // Find last assistant message
+  let lastAssistant: { text: string; ts: number } | null = null;
+
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    try {
+      const parsed = JSON.parse(line);
+      let msg = parsed;
+      if (parsed?.type === 'message' && parsed?.message) msg = parsed.message;
+      if (msg.role !== 'assistant') continue;
+      const text = extractTextContent(msg.content);
+      if (!text.trim() || text === 'NO_REPLY' || text === 'HEARTBEAT_OK') continue;
+
+      const ts = parsed.timestamp
+        ? (typeof parsed.timestamp === 'string' ? new Date(parsed.timestamp).getTime() : parsed.timestamp)
+        : msg.timestamp || Date.now();
+
+      lastAssistant = { text, ts };
+    } catch {}
+  }
+
+  if (!lastAssistant) return [];
+
+  return [{
+    id: `cron_${label}_${lastAssistant.ts}`,
+    role: 'assistant',
+    content: `📋 **${label}**\n\n${lastAssistant.text}`,
+    timestamp: lastAssistant.ts,
+    isCron: true,
+  }];
+}
+
 // GET /api/gateway/history?sessionKey=agent:main:main&limit=50
 export async function GET(req: NextRequest) {
   if (!isAuthenticatedFromRequest(req)) {
@@ -118,13 +199,23 @@ export async function GET(req: NextRequest) {
   const agentId = parts[1];
 
   try {
+    // Get main session messages
     const filePath = findSessionFile(agentId, sessionKey);
-    if (!filePath) {
-      return NextResponse.json({ messages: [], sessionKey });
+    const mainMessages = filePath ? parseTranscriptFile(filePath, limit) : [];
+
+    // Get cron session messages (last 24h)
+    const cronFiles = findCronSessionFiles(agentId);
+    const cronMessages: any[] = [];
+    for (const cf of cronFiles) {
+      cronMessages.push(...parseCronTranscript(cf.path, cf.label));
     }
-    
-    const messages = parseTranscriptFile(filePath, limit);
-    return NextResponse.json({ messages, sessionKey, total: messages.length });
+
+    // Merge and sort by timestamp
+    const allMessages = [...mainMessages, ...cronMessages]
+      .sort((a, b) => a.timestamp - b.timestamp)
+      .slice(-limit);
+
+    return NextResponse.json({ messages: allMessages, sessionKey, total: allMessages.length });
   } catch (err: any) {
     console.error('[API] history error:', err.message);
     return NextResponse.json({ messages: [], sessionKey });
