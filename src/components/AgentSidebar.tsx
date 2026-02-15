@@ -12,9 +12,9 @@ interface AgentSidebarProps {
 
 export default function AgentSidebar({ agents, selectedAgentId, onSelectAgent, onClose, loading }: AgentSidebarProps) {
   return (
-    <div className="flex flex-col h-full w-full bg-[var(--bg-secondary)]">
-      {/* Header - relative + z-10 to stay above scrolling list */}
-      <div className="relative z-10 flex items-center justify-between px-5 py-4 border-b border-[var(--border)] bg-[var(--bg-secondary)] safe-top shrink-0">
+    <div className="flex flex-col flex-1 min-h-0 w-full bg-[var(--bg-secondary)]">
+      {/* Header */}
+      <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)] bg-[var(--bg-secondary)] safe-top shrink-0">
         <div className="flex items-center gap-3">
           <span className="text-2xl">🐾</span>
           <h1 className="text-lg font-bold text-white">OpenClaw</h1>
@@ -32,8 +32,9 @@ export default function AgentSidebar({ agents, selectedAgentId, onSelectAgent, o
         )}
       </div>
 
-      {/* Agent List - proper scroll container */}
-      <div className="flex-1 overflow-y-auto overscroll-contain py-2" style={{ WebkitOverflowScrolling: 'touch' }}>
+      {/* Agent List - relative+absolute pattern guarantees bounded scroll height */}
+      <div className="relative flex-1 min-h-0">
+        <div className="absolute inset-0 overflow-y-auto overscroll-contain py-2" style={{ WebkitOverflowScrolling: 'touch' }}>
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <div className="flex gap-1.5">
@@ -81,6 +82,7 @@ export default function AgentSidebar({ agents, selectedAgentId, onSelectAgent, o
             </button>
           ))
         )}
+        </div>
       </div>
     </div>
   );

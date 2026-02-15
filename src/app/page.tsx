@@ -123,7 +123,7 @@ export default function Home() {
   return (
     <div className="flex h-dvh overflow-hidden" style={{ height: '100dvh' }}>
       {/* Sidebar - desktop: always visible, fixed width */}
-      <div className="hidden md:flex md:flex-col w-72 shrink-0 border-r border-[var(--border)]">
+      <div className="hidden md:flex md:flex-col w-72 shrink-0 min-h-0 border-r border-[var(--border)]">
         <AgentSidebar
           agents={agents}
           selectedAgentId={selectedAgentId}
@@ -134,7 +134,7 @@ export default function Home() {
 
       {/* Mobile: full-screen agent list when no agent selected */}
       {!selectedAgentId && (
-        <div className="flex flex-col flex-1 md:hidden">
+        <div className="flex flex-col flex-1 min-h-0 md:hidden">
           <AgentSidebar
             agents={agents}
             selectedAgentId={selectedAgentId}
