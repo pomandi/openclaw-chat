@@ -61,13 +61,19 @@ export async function streamChatMessage(
   // Build content - either simple string or multimodal array
   const content = typeof message === 'string' ? message : message;
 
+  // Use X-OpenClaw-Session-Key header to route to the agent's main session
+  // This ensures web app messages go to the same transcript as Telegram messages
+  const mainSessionKey = `agent:${agentId}:main`;
+
   const res = await gatewayFetch('/v1/chat/completions', {
     method: 'POST',
+    headers: {
+      'X-OpenClaw-Session-Key': mainSessionKey,
+    },
     body: JSON.stringify({
       model: `openclaw:${agentId}`,
       stream: true,
       messages: [{ role: 'user', content }],
-      ...(sessionKey ? { user: sessionKey } : {}),
     }),
   });
 
@@ -81,13 +87,17 @@ export async function sendChatMessageSync(
 ): Promise<string> {
   const content = typeof message === 'string' ? message : message;
 
+  const mainSessionKey = `agent:${agentId}:main`;
+
   const res = await gatewayFetch('/v1/chat/completions', {
     method: 'POST',
+    headers: {
+      'X-OpenClaw-Session-Key': mainSessionKey,
+    },
     body: JSON.stringify({
       model: `openclaw:${agentId}`,
       stream: false,
       messages: [{ role: 'user', content }],
-      ...(sessionKey ? { user: sessionKey } : {}),
     }),
   });
 
