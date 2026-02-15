@@ -63,24 +63,45 @@ interface AgentLatest {
   previewRole: 'user' | 'assistant';
 }
 
+/** Read only the tail of a file (last ~32KB) to avoid loading huge JSONL files */
+function readTailLines(filePath: string, maxBytes = 32768): string[] {
+  const fd = fs.openSync(filePath, 'r');
+  try {
+    const stat = fs.fstatSync(fd);
+    const size = stat.size;
+    if (size === 0) return [];
+    
+    const readSize = Math.min(maxBytes, size);
+    const buffer = Buffer.alloc(readSize);
+    fs.readSync(fd, buffer, 0, readSize, size - readSize);
+    
+    const raw = buffer.toString('utf-8');
+    const lines = raw.split(/\r?\n/);
+    
+    // First line may be partial (cut mid-line), skip it unless we read from start
+    if (readSize < size) {
+      lines.shift();
+    }
+    
+    return lines;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 function getAgentLatest(agentId: string): AgentLatest | null {
   const filePath = findSessionFile(agentId);
   if (!filePath) return null;
   
   try {
-    const raw = fs.readFileSync(filePath, 'utf-8');
-    const lines = raw.split(/\r?\n/);
+    const lines = readTailLines(filePath);
     
     let lastTs = 0;
     let lastAssistantTs = 0;
     let preview = '';
     let previewRole: 'user' | 'assistant' = 'assistant';
     
-    // Read from end for efficiency (last ~50 lines should be enough)
-    const startIdx = Math.max(0, lines.length - 50);
-    
-    for (let i = startIdx; i < lines.length; i++) {
-      const line = lines[i];
+    for (const line of lines) {
       if (!line.trim()) continue;
       
       try {
@@ -117,7 +138,7 @@ function getAgentLatest(agentId: string): AgentLatest | null {
           lastAssistantTs = ts;
         }
       } catch {
-        // skip
+        // skip malformed lines
       }
     }
     

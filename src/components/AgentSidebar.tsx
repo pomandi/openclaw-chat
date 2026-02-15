@@ -31,6 +31,13 @@ function formatTimeAgo(ts: number): string {
 }
 
 export default function AgentSidebar({ agents, selectedAgentId, onSelectAgent, onClose, loading, unreadMap, lastSeenMap }: AgentSidebarProps) {
+  // Calculate total unread count
+  const totalUnread = agents.filter(a => {
+    const info = unreadMap?.[a.id];
+    const lastSeen = lastSeenMap?.[a.id] || 0;
+    return info && info.lastTs > lastSeen;
+  }).length;
+
   // Sort agents: unread first, then by last message time
   const sortedAgents = [...agents].sort((a, b) => {
     const aInfo = unreadMap?.[a.id];
@@ -57,6 +64,11 @@ export default function AgentSidebar({ agents, selectedAgentId, onSelectAgent, o
         <div className="flex items-center gap-3">
           <span className="text-2xl">🐾</span>
           <h1 className="text-lg font-bold text-white">OpenClaw</h1>
+          {totalUnread > 0 && (
+            <span className="min-w-5 h-5 px-1.5 flex items-center justify-center bg-[var(--accent)] text-white text-[11px] font-bold rounded-full animate-fade-in">
+              {totalUnread}
+            </span>
+          )}
         </div>
         {onClose && (
           <button
