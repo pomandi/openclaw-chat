@@ -121,7 +121,7 @@ export default function Home() {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="flex h-dvh overflow-hidden" style={{ height: '100dvh' }}>
       {/* Sidebar - desktop: always visible, fixed width */}
       <div className="hidden md:flex md:flex-col w-72 shrink-0 border-r border-[var(--border)]">
         <AgentSidebar

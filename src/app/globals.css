@@ -26,10 +26,15 @@
 }
 
 html, body {
-  height: 100%;
+  height: 100dvh; /* dynamic viewport height - accounts for mobile browser chrome */
+  height: 100vh; /* fallback for older browsers */
   margin: 0;
   padding: 0;
   overflow: hidden;
+}
+
+@supports (height: 100dvh) {
+  html, body { height: 100dvh; }
 }
 
 body {
