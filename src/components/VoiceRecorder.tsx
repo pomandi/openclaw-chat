@@ -95,14 +95,14 @@ export default function VoiceRecorder({ onSend, onCancel, disabled }: VoiceRecor
   // ---- Idle / Error: show retry or back ----
   if (state === 'idle' || state === 'error') {
     return (
-      <div className="relative flex items-center gap-2 flex-1">
+      <div className="relative flex items-center gap-2 flex-1 min-h-[44px]">
         <button
           type="button"
           onClick={() => onCancel?.()}
-          className="p-2 text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] rounded-full transition-colors shrink-0"
+          className="flex items-center justify-center w-11 h-11 text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] rounded-xl transition-colors shrink-0 active:scale-95"
           title="Back to text"
         >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
           </svg>
         </button>
@@ -113,7 +113,7 @@ export default function VoiceRecorder({ onSend, onCancel, disabled }: VoiceRecor
           type="button"
           onClick={handleMicClick}
           disabled={disabled}
-          className="p-2.5 text-[var(--text-muted)] hover:text-[var(--accent)] hover:bg-[var(--bg-hover)] rounded-full transition-colors shrink-0 disabled:opacity-30"
+          className="flex items-center justify-center w-11 h-11 text-[var(--text-muted)] hover:text-[var(--accent)] hover:bg-[var(--accent)]/10 rounded-xl transition-colors shrink-0 disabled:opacity-30 active:scale-95"
           title="Try again"
         >
           <MicIcon />
@@ -125,12 +125,12 @@ export default function VoiceRecorder({ onSend, onCancel, disabled }: VoiceRecor
   // ---- Recording state ----
   if (state === 'recording' || state === 'requesting') {
     return (
-      <div className="flex items-center gap-2 flex-1 animate-fade-in">
-        {/* Cancel */}
+      <div className="flex items-center gap-2 flex-1 animate-fade-in min-h-[44px]">
+        {/* Cancel — large touch target */}
         <button
           type="button"
           onClick={handleDiscard}
-          className="p-2 text-[var(--text-muted)] hover:text-[var(--error)] hover:bg-[var(--bg-hover)] rounded-full transition-colors shrink-0"
+          className="flex items-center justify-center w-11 h-11 text-[var(--text-muted)] hover:text-[var(--error)] hover:bg-[var(--error)]/10 rounded-xl transition-colors shrink-0 active:scale-95"
           title="Cancel recording"
         >
           <TrashIcon />
@@ -138,23 +138,23 @@ export default function VoiceRecorder({ onSend, onCancel, disabled }: VoiceRecor
 
         {/* Recording indicator + waveform */}
         <div className="flex items-center gap-2 flex-1 min-w-0">
-          <div className="w-2.5 h-2.5 bg-[var(--error)] rounded-full animate-pulse shrink-0" />
-          <span className="text-xs text-[var(--error)] font-mono shrink-0 min-w-[36px]">
+          <div className="w-3 h-3 bg-[var(--error)] rounded-full animate-pulse shrink-0" />
+          <span className="text-sm text-[var(--error)] font-mono shrink-0 min-w-[40px]">
             {formatTime(duration)}
           </span>
           <canvas
             ref={canvasRef}
             width={160}
-            height={28}
-            className="flex-1 max-w-[160px] h-7"
+            height={32}
+            className="flex-1 max-w-[160px] h-8"
           />
         </div>
 
-        {/* Stop */}
+        {/* Stop — large prominent button */}
         <button
           type="button"
           onClick={stopRecording}
-          className="p-2.5 bg-[var(--error)] hover:bg-[var(--error)]/80 text-white rounded-full transition-colors shrink-0"
+          className="flex items-center justify-center w-11 h-11 bg-[var(--error)] hover:bg-[var(--error)]/80 text-white rounded-xl transition-colors shrink-0 active:scale-95 shadow-md shadow-[var(--error)]/20"
           title="Stop recording"
         >
           <StopIcon />
@@ -166,12 +166,12 @@ export default function VoiceRecorder({ onSend, onCancel, disabled }: VoiceRecor
   // ---- Recorded state: preview + send ----
   if (state === 'recorded' && recording) {
     return (
-      <div className="flex items-center gap-2 flex-1 animate-fade-in">
-        {/* Delete */}
+      <div className="flex items-center gap-2 flex-1 animate-fade-in min-h-[44px]">
+        {/* Delete — large touch target */}
         <button
           type="button"
           onClick={handleDiscard}
-          className="p-2 text-[var(--text-muted)] hover:text-[var(--error)] hover:bg-[var(--bg-hover)] rounded-full transition-colors shrink-0"
+          className="flex items-center justify-center w-11 h-11 text-[var(--text-muted)] hover:text-[var(--error)] hover:bg-[var(--error)]/10 rounded-xl transition-colors shrink-0 active:scale-95"
           title="Discard recording"
         >
           <TrashIcon />
@@ -180,11 +180,11 @@ export default function VoiceRecorder({ onSend, onCancel, disabled }: VoiceRecor
         {/* Mini preview player */}
         <MiniPlayer url={recording.url} duration={recording.duration} />
 
-        {/* Send */}
+        {/* Send — large prominent button */}
         <button
           type="button"
           onClick={handleSend}
-          className="p-2.5 bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white rounded-full transition-colors shrink-0"
+          className="flex items-center justify-center w-11 h-11 bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white rounded-xl transition-colors shrink-0 active:scale-95 shadow-md shadow-[var(--accent)]/20"
           title="Send voice message"
         >
           <SendIcon />
@@ -243,18 +243,18 @@ function MiniPlayer({ url, duration }: { url: string; duration: number }) {
   };
 
   return (
-    <div className="flex items-center gap-2 flex-1 min-w-0 px-3 py-1.5 bg-[var(--bg-tertiary)] rounded-full">
+    <div className="flex items-center gap-2 flex-1 min-w-0 px-3 py-2 bg-[var(--bg-tertiary)] rounded-xl h-11">
       <audio ref={audioRef} src={url} preload="metadata" />
-      <button type="button" onClick={togglePlay} className="text-[var(--accent)] shrink-0">
+      <button type="button" onClick={togglePlay} className="text-[var(--accent)] shrink-0 w-6 h-6 flex items-center justify-center">
         {isPlaying ? <PauseSmallIcon /> : <PlaySmallIcon />}
       </button>
-      <div className="flex-1 h-1 bg-[var(--border)] rounded-full overflow-hidden">
+      <div className="flex-1 h-1.5 bg-[var(--border)] rounded-full overflow-hidden">
         <div
           className="h-full bg-[var(--accent)] rounded-full transition-all duration-100"
           style={{ width: `${progress * 100}%` }}
         />
       </div>
-      <span className="text-[10px] text-[var(--text-muted)] font-mono shrink-0">
+      <span className="text-[11px] text-[var(--text-muted)] font-mono shrink-0">
         {formatTime(duration)}
       </span>
     </div>
@@ -344,7 +344,7 @@ export function AudioBubblePlayer({
       {/* Play/Pause */}
       <button
         onClick={togglePlay}
-        className="w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition-colors"
+        className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 transition-colors active:scale-95"
         style={{
           backgroundColor: isUser ? 'rgba(255,255,255,0.15)' : 'var(--accent)/15',
           color: accentColor,
@@ -363,9 +363,8 @@ export function AudioBubblePlayer({
 
       {/* Progress + duration */}
       <div className="flex-1 min-w-0">
-        {/* Waveform-style bars (decorative) + progress overlay */}
         <div
-          className="relative h-6 flex items-center cursor-pointer"
+          className="relative h-7 flex items-center cursor-pointer"
           onClick={handleProgressClick}
         >
           <WaveformBars progress={progress} accentColor={accentColor} trackColor={trackColor} />
@@ -395,7 +394,6 @@ function WaveformBars({
   accentColor: string;
   trackColor: string;
 }) {
-  // Pseudo-random bar heights for visual appeal
   const bars = [0.3, 0.5, 0.7, 0.4, 0.9, 0.6, 0.8, 0.3, 0.7, 0.5, 0.9, 0.4, 0.6, 0.8, 0.3, 0.7, 0.5, 0.4, 0.8, 0.6, 0.3, 0.9, 0.5, 0.7, 0.4, 0.6, 0.8, 0.5];
   const total = bars.length;
 
@@ -424,7 +422,7 @@ function WaveformBars({
 
 function MicIcon() {
   return (
-    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z" />
       <path strokeLinecap="round" strokeLinejoin="round" d="M19 10v2a7 7 0 01-14 0v-2" />
       <line x1="12" y1="19" x2="12" y2="23" />
@@ -443,7 +441,7 @@ function StopIcon() {
 
 function TrashIcon() {
   return (
-    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
     </svg>
   );
@@ -451,15 +449,15 @@ function TrashIcon() {
 
 function SendIcon() {
   return (
-    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M12 19V5m0 0l-7 7m7-7l7 7" />
+    <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+      <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
     </svg>
   );
 }
 
 function PlaySmallIcon() {
   return (
-    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+    <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
       <path d="M8 5v14l11-7z" />
     </svg>
   );
@@ -467,7 +465,7 @@ function PlaySmallIcon() {
 
 function PauseSmallIcon() {
   return (
-    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+    <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
       <path d="M6 4h4v16H6zM14 4h4v16h-4z" />
     </svg>
   );

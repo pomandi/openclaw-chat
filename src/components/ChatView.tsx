@@ -76,8 +76,6 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
             status: 'sent' as const,
           }));
 
-          // Merge: use server history as base, then append any local-only messages
-          // (messages sent after last server history timestamp)
           const stored = localStorage.getItem(`chat:${sessionKey}`);
           let localMessages: ChatMessage[] = [];
           if (stored) {
@@ -88,19 +86,16 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
 
           if (serverMessages.length > 0) {
             const lastServerTs = serverMessages[serverMessages.length - 1]?.timestamp || 0;
-            // Find local messages that are newer than server history
             const localOnly = localMessages.filter(m =>
               m.timestamp > lastServerTs && !m.id.startsWith('hist_')
             );
             setMessages([...serverMessages, ...localOnly]);
           } else if (localMessages.length > 0) {
-            // No server history, use localStorage as fallback
             setMessages(localMessages);
           }
         }
       } catch (err) {
         console.error('[Chat] history load error:', err);
-        // Fallback to localStorage
         const stored = localStorage.getItem(`chat:${sessionKey}`);
         if (stored && !cancelled) {
           try { setMessages(JSON.parse(stored)); } catch { /* */ }
@@ -108,7 +103,6 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
       } finally {
         if (!cancelled) {
           setLoadingHistory(false);
-          // Force scroll to bottom after history loads
           setTimeout(() => {
             messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
           }, 100);
@@ -123,12 +117,10 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
   // Save messages to localStorage
   useEffect(() => {
     if (messages.length > 0) {
-      // Only save last 100 messages and strip large attachments
       const toSave = messages.slice(-100).map(m => ({
         ...m,
         attachments: m.attachments?.map(a => ({
           ...a,
-          // Truncate large data for localStorage — keep audio dataUrl intact up to 500KB for playback
           dataUrl: a.type === 'audio'
             ? (a.dataUrl.length < 700000 ? a.dataUrl : a.dataUrl.substring(0, 200) + '...')
             : a.type === 'image'
@@ -208,7 +200,6 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
     
     if ((!text && msgAttachments.length === 0) || sending) return;
 
-    // Derive agentId from sessionKey (format: agent:AGENTID:main)
     const agentId = sessionKey.split(':')[1] || agent.id;
 
     // Add user message
@@ -287,7 +278,7 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
-        buffer = lines.pop() || ''; // Keep incomplete line in buffer
+        buffer = lines.pop() || '';
 
         for (const line of lines) {
           if (line.startsWith('data: ')) {
@@ -300,11 +291,6 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
               if (delta) {
                 accumulated += delta;
                 setStreamText(accumulated);
-              }
-              
-              // Check for finish
-              if (json.choices?.[0]?.finish_reason) {
-                // Stream finished
               }
             } catch {
               // ignore parse errors for partial JSON
@@ -355,7 +341,6 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
 
   function handleRetry() {
     if (retryMessage) {
-      // Remove the error system message
       setMessages(prev => prev.filter(m => m.role !== 'system' || m.status !== 'error'));
       handleSend(undefined, retryMessage);
     }
@@ -372,7 +357,7 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
     setInput(e.target.value);
     const textarea = e.target;
     textarea.style.height = 'auto';
-    textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
+    textarea.style.height = Math.min(textarea.scrollHeight, 150) + 'px';
   }
 
   function handlePaste(e: React.ClipboardEvent) {
@@ -398,13 +383,12 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
       id: `att_voice_${Date.now()}`,
       type: 'audio',
       name: `voice_${Date.now()}.${mimeType.includes('webm') ? 'webm' : mimeType.includes('ogg') ? 'ogg' : 'mp4'}`,
-      size: Math.round((dataUrl.length * 3) / 4), // approximate base64 size
+      size: Math.round((dataUrl.length * 3) / 4),
       mimeType,
       dataUrl,
       duration,
     };
 
-    // Create and send the voice message
     const userMsg: ChatMessage = {
       id: `user_${Date.now()}`,
       role: 'user',
@@ -427,7 +411,7 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
     (async () => {
       try {
         // Step 1: Transcribe audio to text
-        let transcribedText = '[Voice message]';
+        let transcribedText = '';
         try {
           const transcribeRes = await fetch('/api/transcribe', {
             method: 'POST',
@@ -445,20 +429,22 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
           console.warn('[Voice] Transcription failed, sending as audio:', e);
         }
 
-        // Update user message with transcribed text
+        // Update user message with transcribed text or indicate voice message
+        const displayText = transcribedText || '🎤 Voice message';
         setMessages(prev => prev.map(m =>
-          m.id === userMsg.id ? { ...m, content: transcribedText } : m
+          m.id === userMsg.id ? { ...m, content: displayText } : m
         ));
 
-        // Step 2: Send transcribed text (or audio fallback) to agent
+        // Step 2: Send to agent - use transcribed text if available, otherwise send audio
+        const messageToSend = transcribedText || '[Voice message - audio attached]';
         const res = await fetch('/api/gateway/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             agentId,
-            message: transcribedText,
+            message: messageToSend,
             sessionKey,
-            ...(transcribedText === '[Voice message]' ? {
+            ...(!transcribedText ? {
               attachments: [{
                 type: 'audio',
                 name: audioAttachment.name,
@@ -538,6 +524,8 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
     })();
   }
 
+  const hasInput = input.trim().length > 0 || attachments.length > 0;
+
   return (
     <div
       className="flex flex-col h-full bg-[var(--bg-primary)]"
@@ -559,58 +547,57 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
 
       {/* Header */}
       <div className="flex items-center gap-3 px-4 py-3 bg-[var(--bg-secondary)] border-b border-[var(--border)] safe-top shrink-0">
-        {/* Mobile: back button (goes to agent list) */}
+        {/* Mobile: back button — large touch target */}
         {onBack && (
           <button
             onClick={onBack}
-            className="p-2 -ml-2 hover:bg-[var(--bg-hover)] rounded-lg transition-colors md:hidden"
+            className="flex items-center justify-center w-10 h-10 -ml-1 hover:bg-[var(--bg-hover)] rounded-xl transition-colors md:hidden active:scale-95"
             title="Back to agents"
           >
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
             </svg>
           </button>
         )}
         
-        {/* Mobile: agent list toggle (hamburger) */}
-        {onOpenSidebar && (
-          <button
-            onClick={onOpenSidebar}
-            className="p-2 -ml-2 hover:bg-[var(--bg-hover)] rounded-lg transition-colors md:hidden"
-            title="Switch agent"
-          >
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-            </svg>
-          </button>
-        )}
-        
-        <div className="w-9 h-9 rounded-full bg-[var(--accent)]/20 flex items-center justify-center text-lg">
+        <div className="w-10 h-10 rounded-full bg-[var(--accent)]/20 flex items-center justify-center text-lg shrink-0">
           {agentEmoji}
         </div>
         
         <div className="flex-1 min-w-0">
-          <div className="font-medium text-white text-sm truncate">{agentName}</div>
+          <div className="font-semibold text-white text-[15px] truncate">{agentName}</div>
           <div className="text-xs text-[var(--text-muted)] truncate">{agent.id}</div>
         </div>
 
+        {/* Mobile: hamburger for sidebar */}
+        {onOpenSidebar && (
+          <button
+            onClick={onOpenSidebar}
+            className="flex items-center justify-center w-10 h-10 hover:bg-[var(--bg-hover)] rounded-xl transition-colors md:hidden active:scale-95"
+            title="Switch agent"
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </button>
+        )}
+
         {sending && (
-          <div className="text-xs text-[var(--accent)] flex items-center gap-1">
-            <div className="w-1.5 h-1.5 bg-[var(--accent)] rounded-full animate-pulse" />
-            Processing...
+          <div className="text-xs text-[var(--accent)] flex items-center gap-1.5 shrink-0">
+            <div className="w-2 h-2 bg-[var(--accent)] rounded-full animate-pulse" />
+            <span className="hidden sm:inline">Processing...</span>
           </div>
         )}
       </div>
 
       {/* Messages */}
-      <div ref={messagesContainerRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-3 relative">
+      <div ref={messagesContainerRef} className="flex-1 overflow-y-auto px-3 sm:px-4 py-4 space-y-3 relative messages-container">
         {loadingHistory ? (
           <div className="space-y-4 animate-pulse">
-            {/* Skeleton loading for chat history */}
             {[...Array(5)].map((_, i) => (
               <div key={i} className={`flex gap-2 ${i % 2 === 0 ? 'flex-row-reverse' : ''}`}>
                 {i % 2 !== 0 && (
-                  <div className="w-7 h-7 rounded-full bg-[var(--bg-tertiary)] shrink-0 mt-1" />
+                  <div className="w-8 h-8 rounded-full bg-[var(--bg-tertiary)] shrink-0 mt-1" />
                 )}
                 <div className={`${i % 2 === 0 ? 'ml-auto' : ''} max-w-[70%]`}>
                   <div
@@ -627,9 +614,9 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
             ))}
           </div>
         ) : messages.length === 0 && !streaming ? (
-          <div className="flex flex-col items-center justify-center h-full text-center">
-            <div className="text-4xl mb-4">{agentEmoji}</div>
-            <h2 className="text-lg font-medium text-white mb-2">Chat with {agentName}</h2>
+          <div className="flex flex-col items-center justify-center h-full text-center px-4">
+            <div className="text-5xl mb-4">{agentEmoji}</div>
+            <h2 className="text-lg font-semibold text-white mb-2">Chat with {agentName}</h2>
             <p className="text-sm text-[var(--text-muted)] max-w-sm">
               Send a message to start the conversation
             </p>
@@ -643,10 +630,10 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
             {/* Streaming response */}
             {streaming && streamText && (
               <div className="flex gap-2 animate-fade-in">
-                <div className="w-7 h-7 rounded-full bg-[var(--bg-tertiary)] flex items-center justify-center text-sm shrink-0 mt-1">
+                <div className="w-8 h-8 rounded-full bg-[var(--bg-tertiary)] flex items-center justify-center text-sm shrink-0 mt-1">
                   {agentEmoji}
                 </div>
-                <div className="max-w-[85%] px-4 py-2.5 rounded-2xl rounded-tl-md bg-[var(--bubble-assistant)] text-sm break-words">
+                <div className="max-w-[85%] px-4 py-3 rounded-2xl rounded-tl-md bg-[var(--bubble-assistant)] text-sm break-words">
                   <MarkdownRenderer content={streamText} />
                   <span className="inline-block w-0.5 h-4 bg-[var(--accent)] ml-0.5 animate-blink" />
                 </div>
@@ -656,11 +643,11 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
             {/* Typing indicator */}
             {sending && !streaming && !streamText && (
               <div className="flex gap-2 animate-fade-in">
-                <div className="w-7 h-7 rounded-full bg-[var(--bg-tertiary)] flex items-center justify-center text-sm shrink-0 mt-1">
+                <div className="w-8 h-8 rounded-full bg-[var(--bg-tertiary)] flex items-center justify-center text-sm shrink-0 mt-1">
                   {agentEmoji}
                 </div>
                 <div className="px-4 py-3 rounded-2xl rounded-tl-md bg-[var(--bubble-assistant)]">
-                  <div className="flex gap-1">
+                  <div className="flex gap-1.5">
                     <div className="w-2 h-2 bg-[var(--text-muted)] rounded-full typing-dot" />
                     <div className="w-2 h-2 bg-[var(--text-muted)] rounded-full typing-dot" />
                     <div className="w-2 h-2 bg-[var(--text-muted)] rounded-full typing-dot" />
@@ -674,7 +661,7 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
               <div className="flex justify-center animate-fade-in">
                 <button
                   onClick={handleRetry}
-                  className="flex items-center gap-2 px-4 py-2 bg-[var(--error)]/10 hover:bg-[var(--error)]/20 text-[var(--error)] text-sm rounded-full transition-colors"
+                  className="flex items-center gap-2 px-5 py-2.5 bg-[var(--error)]/10 hover:bg-[var(--error)]/20 text-[var(--error)] text-sm font-medium rounded-full transition-colors active:scale-95"
                 >
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -691,7 +678,7 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
         {showScrollBtn && (
           <button
             onClick={() => scrollToBottom(true)}
-            className="fixed bottom-24 right-6 z-10 w-10 h-10 bg-[var(--bg-tertiary)] hover:bg-[var(--bg-hover)] border border-[var(--border)] rounded-full flex items-center justify-center shadow-lg transition-all animate-fade-in"
+            className="fixed bottom-28 right-4 sm:right-6 z-10 w-11 h-11 bg-[var(--bg-tertiary)] hover:bg-[var(--bg-hover)] border border-[var(--border)] rounded-full flex items-center justify-center shadow-lg transition-all animate-fade-in active:scale-95"
           >
             <svg className="w-5 h-5 text-[var(--text-secondary)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
@@ -702,7 +689,7 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
 
       {/* Attachment previews */}
       {attachments.length > 0 && (
-        <div className="shrink-0 px-4 py-2 bg-[var(--bg-secondary)] border-t border-[var(--border)] flex gap-2 overflow-x-auto">
+        <div className="shrink-0 px-4 py-2.5 bg-[var(--bg-secondary)] border-t border-[var(--border)] flex gap-2 overflow-x-auto">
           {attachments.map(att => (
             <div key={att.id} className="relative group shrink-0">
               {att.type === 'image' && att.previewUrl ? (
@@ -721,7 +708,7 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
               )}
               <button
                 onClick={() => removeAttachment(att.id)}
-                className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-[var(--error)] text-white rounded-full flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+                className="absolute -top-1.5 -right-1.5 w-6 h-6 bg-[var(--error)] text-white rounded-full flex items-center justify-center text-xs shadow-md"
               >
                 ×
               </button>
@@ -730,11 +717,11 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
         </div>
       )}
 
-      {/* Input */}
-      <div className="shrink-0 px-4 py-3 bg-[var(--bg-secondary)] border-t border-[var(--border)] safe-bottom">
+      {/* Input area */}
+      <div className="shrink-0 px-3 sm:px-4 py-3 bg-[var(--bg-secondary)] border-t border-[var(--border)] safe-bottom">
         {voiceMode ? (
-          /* Voice recording mode - replaces normal input */
-          <div className="flex items-center gap-2">
+          /* Voice recording mode */
+          <div className="flex items-center gap-2 min-h-[52px]">
             <VoiceRecorder
               onSend={handleVoiceSend}
               onCancel={() => setVoiceMode(false)}
@@ -744,15 +731,15 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
         ) : (
           /* Normal text input mode */
           <form onSubmit={handleSend} className="flex items-end gap-2">
-            {/* Attachment button */}
+            {/* Attachment button — 44x44 touch target */}
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="p-2.5 text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] rounded-full transition-colors shrink-0"
+              className="flex items-center justify-center w-11 h-11 text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] rounded-xl transition-colors shrink-0 active:scale-95"
               title="Attach file"
             >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+              <svg className="w-[22px] h-[22px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
               </svg>
             </button>
 
@@ -765,6 +752,7 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
               className="hidden"
             />
 
+            {/* Textarea — NOT disabled during sending (Fix #3) */}
             <textarea
               ref={inputRef}
               value={input}
@@ -773,16 +761,15 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
               onPaste={handlePaste}
               placeholder={`Message ${agentName}...`}
               rows={1}
-              className="flex-1 px-4 py-2.5 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded-2xl text-sm text-white placeholder-[var(--text-muted)] focus:outline-none focus:border-[var(--accent)] transition-colors resize-none"
-              disabled={sending}
+              className="flex-1 min-h-[44px] max-h-[150px] px-4 py-3 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded-2xl text-[15px] text-white placeholder-[var(--text-muted)] focus:outline-none focus:border-[var(--accent)] transition-colors resize-none leading-snug"
             />
 
-            {/* Show send button when there's text/attachments, mic button otherwise */}
-            {(input.trim() || attachments.length > 0) ? (
+            {/* Send or Voice button — 44x44 touch target */}
+            {hasInput ? (
               <button
                 type="submit"
                 disabled={sending}
-                className="p-2.5 bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white rounded-full transition-colors disabled:opacity-30 disabled:cursor-not-allowed shrink-0"
+                className="flex items-center justify-center w-11 h-11 bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white rounded-xl transition-all shrink-0 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed shadow-md shadow-[var(--accent)]/20"
               >
                 {sending ? (
                   <svg className="w-5 h-5 animate-spin" viewBox="0 0 24 24" fill="none">
@@ -790,8 +777,8 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                   </svg>
                 ) : (
-                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19V5m0 0l-7 7m7-7l7 7" />
+                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
                   </svg>
                 )}
               </button>
@@ -800,10 +787,10 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
                 type="button"
                 onClick={() => setVoiceMode(true)}
                 disabled={sending}
-                className="p-2.5 text-[var(--text-muted)] hover:text-[var(--accent)] hover:bg-[var(--bg-hover)] rounded-full transition-colors disabled:opacity-30 shrink-0"
+                className="flex items-center justify-center w-11 h-11 text-[var(--text-secondary)] hover:text-[var(--accent)] hover:bg-[var(--accent)]/10 rounded-xl transition-colors shrink-0 active:scale-95 disabled:opacity-40"
                 title="Record voice message"
               >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z" />
                   <path strokeLinecap="round" strokeLinejoin="round" d="M19 10v2a7 7 0 01-14 0v-2" />
                   <line x1="12" y1="19" x2="12" y2="23" />
@@ -825,7 +812,7 @@ function MessageBubble({ message, agentEmoji }: { message: ChatMessage; agentEmo
   if (isSystem) {
     return (
       <div className="flex justify-center animate-fade-in">
-        <div className="px-3 py-1.5 rounded-full bg-[var(--error)]/10 text-[var(--error)] text-xs">
+        <div className="px-4 py-2 rounded-full bg-[var(--error)]/10 text-[var(--error)] text-xs">
           {message.content}
         </div>
       </div>
@@ -845,12 +832,12 @@ function MessageBubble({ message, agentEmoji }: { message: ChatMessage; agentEmo
   return (
     <div className={`flex gap-2 animate-fade-in ${isUser ? 'flex-row-reverse' : ''}`}>
       {!isUser && (
-        <div className="w-7 h-7 rounded-full bg-[var(--bg-tertiary)] flex items-center justify-center text-sm shrink-0 mt-1">
+        <div className="w-8 h-8 rounded-full bg-[var(--bg-tertiary)] flex items-center justify-center text-sm shrink-0 mt-1">
           {agentEmoji}
         </div>
       )}
       
-      <div className={`max-w-[85%] ${isUser ? '' : ''}`}>
+      <div className="max-w-[85%]">
         {/* Attachments */}
         {message.attachments && message.attachments.length > 0 && (
           <div className={`flex flex-wrap gap-2 mb-1 ${isUser ? 'justify-end' : 'justify-start'}`}>
@@ -895,7 +882,7 @@ function MessageBubble({ message, agentEmoji }: { message: ChatMessage; agentEmo
 
         {/* Message content */}
         {message.content && (
-          <div className={`px-4 py-2.5 rounded-2xl text-sm break-words ${
+          <div className={`px-4 py-3 rounded-2xl text-[15px] break-words leading-relaxed ${
             isUser
               ? 'bg-[var(--bubble-user)] text-white rounded-tr-md'
               : 'bg-[var(--bubble-assistant)] text-[var(--text-primary)] rounded-tl-md'
@@ -909,7 +896,7 @@ function MessageBubble({ message, agentEmoji }: { message: ChatMessage; agentEmo
         )}
 
         {/* Timestamp & status */}
-        <div className={`flex items-center gap-1 mt-0.5 px-1 ${isUser ? 'justify-end' : 'justify-start'}`}>
+        <div className={`flex items-center gap-1 mt-1 px-1 ${isUser ? 'justify-end' : 'justify-start'}`}>
           <span className="text-[10px] text-[var(--text-muted)]">{timeStr}</span>
           {isUser && message.status === 'sending' && (
             <svg className="w-3 h-3 text-[var(--text-muted)] animate-spin" viewBox="0 0 24 24">
@@ -918,12 +905,12 @@ function MessageBubble({ message, agentEmoji }: { message: ChatMessage; agentEmo
             </svg>
           )}
           {isUser && message.status === 'sent' && (
-            <svg className="w-3 h-3 text-[var(--accent)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg className="w-3.5 h-3.5 text-[var(--accent)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
             </svg>
           )}
           {isUser && message.status === 'error' && (
-            <svg className="w-3 h-3 text-[var(--error)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg className="w-3.5 h-3.5 text-[var(--error)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
           )}
