@@ -198,7 +198,12 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
     const text = retryMsg?.content || input.trim();
     const msgAttachments = retryMsg?.attachments || [...attachments];
     
-    if ((!text && msgAttachments.length === 0) || sending) return;
+    if (!text && msgAttachments.length === 0) return;
+    
+    // If already sending, allow force-reset after 90 seconds (stuck state recovery)
+    if (sending) {
+      return;
+    }
 
     const agentId = sessionKey.split(':')[1] || agent.id;
 
@@ -232,6 +237,15 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
 
     const controller = new AbortController();
     abortRef.current = controller;
+
+    // Safety timeout: auto-reset sending state after 120s to prevent stuck UI
+    const safetyTimeout = setTimeout(() => {
+      console.warn('[Chat] Safety timeout: resetting sending state after 120s');
+      setSending(false);
+      setStreaming(false);
+      setStreamText('');
+      controller.abort();
+    }, 120_000);
 
     try {
       const res = await fetch('/api/gateway/chat', {
@@ -331,6 +345,7 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
         status: 'error',
       }]);
     } finally {
+      clearTimeout(safetyTimeout);
       setSending(false);
       setStreaming(false);
       setStreamText('');
