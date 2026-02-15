@@ -1,19 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { isAuthenticatedFromRequest } from '@/lib/auth';
-import fs from 'node:fs';
-import path from 'node:path';
+import WebSocket from 'ws';
 
 export const dynamic = 'force-dynamic';
 
-// Transcript files are volume-mounted from host at /data/transcripts
-// Host path: /home/claude/.openclaw/agents/{agentId}/sessions/
-// Container path: /data/transcripts/{agentId}/sessions/
-const TRANSCRIPTS_BASE = process.env.TRANSCRIPTS_PATH || '/data/transcripts';
+const GATEWAY_HTTP_URL = process.env.OPENCLAW_GATEWAY_HTTP_URL || 'http://127.0.0.1:18789';
+const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN || '';
 
-interface TranscriptMessage {
-  role: 'user' | 'assistant' | 'system';
-  content: string | Array<{ type: string; text?: string; thinking?: string }>;
-  timestamp?: number;
+// Convert HTTP URL to WS URL
+function getWsUrl(): string {
+  return GATEWAY_HTTP_URL.replace(/^http/, 'ws');
 }
 
 interface HistoryMessage {
@@ -34,50 +30,121 @@ function extractTextContent(content: unknown): string {
   return '';
 }
 
-function parseTranscriptFile(filePath: string, limit: number): HistoryMessage[] {
-  if (!fs.existsSync(filePath)) return [];
+async function fetchChatHistory(sessionKey: string, limit: number): Promise<HistoryMessage[]> {
+  return new Promise((resolve, reject) => {
+    const wsUrl = getWsUrl();
+    const ws = new WebSocket(wsUrl);
+    const timeout = setTimeout(() => {
+      ws.close();
+      reject(new Error('WebSocket timeout'));
+    }, 15000);
 
-  const raw = fs.readFileSync(filePath, 'utf-8');
-  const lines = raw.split(/\r?\n/);
-  const messages: HistoryMessage[] = [];
+    let connected = false;
+    const reqId = `hist_${Date.now()}`;
 
-  for (const line of lines) {
-    if (!line.trim()) continue;
-    try {
-      const parsed = JSON.parse(line);
+    ws.on('open', () => {
+      // Send connect handshake
+      const connectFrame = {
+        type: 'req',
+        id: 'connect_1',
+        method: 'connect',
+        params: {
+          minProtocol: 3,
+          maxProtocol: 3,
+          client: {
+            id: 'webchat',
+            displayName: 'OpenClaw Chat App',
+            version: '1.0.0',
+            platform: 'web',
+            mode: 'webchat',
+          },
+          auth: {
+            token: GATEWAY_TOKEN,
+          },
+          scopes: ['chat'],
+        },
+      };
+      ws.send(JSON.stringify(connectFrame));
+    });
 
-      // Only process message entries
-      if (parsed?.type !== 'message' || !parsed?.message) continue;
+    ws.on('message', (data: Buffer) => {
+      try {
+        const msg = JSON.parse(data.toString());
 
-      const msg = parsed.message as TranscriptMessage;
-      const role = msg.role;
+        // Handle hello-ok response (connect succeeded)
+        if (msg.type === 'hello-ok' || (msg.type === 'res' && msg.id === 'connect_1' && msg.ok)) {
+          connected = true;
+          // Send chat.history request
+          const historyReq = {
+            type: 'req',
+            id: reqId,
+            method: 'chat.history',
+            params: {
+              sessionKey,
+              limit,
+            },
+          };
+          ws.send(JSON.stringify(historyReq));
+          return;
+        }
 
-      // Only include user and assistant messages
-      if (role !== 'user' && role !== 'assistant') continue;
+        // Handle chat.history response
+        if (msg.type === 'res' && msg.id === reqId) {
+          clearTimeout(timeout);
+          ws.close();
 
-      const text = extractTextContent(msg.content);
-      if (!text.trim()) continue;
+          if (!msg.ok) {
+            resolve([]);
+            return;
+          }
 
-      // Skip internal/system prefixed messages
-      if (text.startsWith('[cron:') || text.startsWith('[heartbeat')) continue;
+          const rawMessages = msg.payload?.messages || [];
+          const messages: HistoryMessage[] = [];
+          let idx = 0;
 
-      const timestamp = parsed.timestamp
-        ? (typeof parsed.timestamp === 'string' ? new Date(parsed.timestamp).getTime() : parsed.timestamp)
-        : Date.now();
+          for (const m of rawMessages) {
+            const role = m.role;
+            if (role !== 'user' && role !== 'assistant') continue;
 
-      messages.push({
-        id: `hist_${parsed.id || messages.length}_${timestamp}`,
-        role,
-        content: text,
-        timestamp,
-      });
-    } catch {
-      // skip invalid lines
-    }
-  }
+            const text = extractTextContent(m.content);
+            if (!text.trim()) continue;
 
-  // Return the last N messages
-  return messages.slice(-limit);
+            // Skip internal messages
+            if (text.startsWith('[cron:') || text.startsWith('[heartbeat')) continue;
+
+            const ts = typeof m.timestamp === 'string' ? new Date(m.timestamp).getTime() :
+                       typeof m.timestamp === 'number' ? m.timestamp : Date.now();
+
+            messages.push({
+              id: `hist_${idx++}_${ts}`,
+              role,
+              content: text,
+              timestamp: ts,
+            });
+          }
+
+          resolve(messages);
+          return;
+        }
+
+        // Skip events/ticks
+      } catch (err) {
+        // ignore parse errors
+      }
+    });
+
+    ws.on('error', (err) => {
+      clearTimeout(timeout);
+      reject(err);
+    });
+
+    ws.on('close', () => {
+      clearTimeout(timeout);
+      if (!connected) {
+        reject(new Error('WebSocket closed before connect'));
+      }
+    });
+  });
 }
 
 // GET /api/gateway/history?sessionKey=agent:main:main&limit=50
@@ -94,43 +161,26 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'sessionKey required' }, { status: 400 });
   }
 
-  // Parse session key: agent:{agentId}:main
+  // Validate session key format: agent:{agentId}:main
   const parts = sessionKey.split(':');
   if (parts.length < 2 || parts[0] !== 'agent') {
     return NextResponse.json({ error: 'Invalid sessionKey format' }, { status: 400 });
   }
-  const agentId = parts[1];
 
   try {
-    // Read sessions.json to find the active session ID
-    const sessionsJsonPath = path.join(TRANSCRIPTS_BASE, agentId, 'sessions', 'sessions.json');
-
-    if (!fs.existsSync(sessionsJsonPath)) {
-      return NextResponse.json({ messages: [], sessionKey });
-    }
-
-    const sessionsStore = JSON.parse(fs.readFileSync(sessionsJsonPath, 'utf-8'));
-    const entry = sessionsStore[sessionKey];
-
-    if (!entry?.sessionId) {
-      return NextResponse.json({ messages: [], sessionKey });
-    }
-
-    // Read the transcript JSONL file
-    const transcriptPath = path.join(
-      TRANSCRIPTS_BASE, agentId, 'sessions', `${entry.sessionId}.jsonl`
-    );
-
-    const messages = parseTranscriptFile(transcriptPath, limit);
-
+    const messages = await fetchChatHistory(sessionKey, limit);
     return NextResponse.json({
       messages,
       sessionKey,
-      sessionId: entry.sessionId,
       total: messages.length,
     });
   } catch (err: any) {
     console.error('[API] history error:', err.message);
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    // Return empty on error rather than failing
+    return NextResponse.json({
+      messages: [],
+      sessionKey,
+      error: err.message,
+    });
   }
 }
