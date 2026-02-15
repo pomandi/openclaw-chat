@@ -89,6 +89,67 @@ function readTailLines(filePath: string, maxBytes = 32768): string[] {
   }
 }
 
+function getAgentLatestByKey(agentId: string, sessionKey: string): AgentLatest | null {
+  const sessionsDir = path.join(AGENTS_DIR, agentId, 'sessions');
+  const sessionsJsonPath = path.join(sessionsDir, 'sessions.json');
+  if (!fs.existsSync(sessionsJsonPath)) return null;
+
+  try {
+    const store = JSON.parse(fs.readFileSync(sessionsJsonPath, 'utf-8'));
+    const entry = store[sessionKey];
+    if (!entry?.sessionId) return null;
+    const transcriptPath = path.join(sessionsDir, `${entry.sessionId}.jsonl`);
+    if (!fs.existsSync(transcriptPath)) return null;
+    return getAgentLatestFromFile(transcriptPath);
+  } catch {
+    return null;
+  }
+}
+
+function getAgentLatestFromFile(filePath: string): AgentLatest | null {
+  try {
+    const lines = readTailLines(filePath);
+    
+    let lastTs = 0;
+    let lastAssistantTs = 0;
+    let preview = '';
+    let previewRole: 'user' | 'assistant' = 'assistant';
+    
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const parsed = JSON.parse(line);
+        let msg = parsed;
+        if (parsed?.type === 'message' && parsed?.message) msg = parsed.message;
+        const role = msg.role;
+        if (role !== 'user' && role !== 'assistant') continue;
+        const text = extractTextContent(msg.content);
+        if (!text.trim()) continue;
+        if (text === 'NO_REPLY' || text === 'HEARTBEAT_OK') continue;
+        if (text.startsWith('Read HEARTBEAT.md')) continue;
+        if (text.startsWith('[cron:') || text.startsWith('[heartbeat')) continue;
+        if (text.startsWith('Pre-compaction memory flush')) continue;
+        if (text.startsWith('[System Message]')) continue;
+        const ts = parsed.timestamp
+          ? (typeof parsed.timestamp === 'string' ? new Date(parsed.timestamp).getTime() : parsed.timestamp)
+          : msg.timestamp || 0;
+        if (ts > lastTs) {
+          lastTs = ts;
+          preview = text.substring(0, 100);
+          previewRole = role;
+        }
+        if (role === 'assistant' && ts > lastAssistantTs) {
+          lastAssistantTs = ts;
+        }
+      } catch {}
+    }
+    if (lastTs === 0) return null;
+    return { lastTs, lastAssistantTs, preview, previewRole };
+  } catch {
+    return null;
+  }
+}
+
 function getAgentLatest(agentId: string): AgentLatest | null {
   const filePath = findSessionFile(agentId);
   if (!filePath) return null;
@@ -214,13 +275,13 @@ export async function GET(req: NextRequest) {
     const mainLatest = getAgentLatest(agentId);
     const cronLatest = getCronLatest(agentId);
 
-    // Use whichever is more recent
-    if (mainLatest && cronLatest) {
-      result[agentId] = cronLatest.lastTs > mainLatest.lastTs ? cronLatest : mainLatest;
-    } else if (mainLatest) {
-      result[agentId] = mainLatest;
-    } else if (cronLatest) {
-      result[agentId] = cronLatest;
+    // Also check app session
+    const appLatest = getAgentLatestByKey(agentId, `agent:${agentId}:app`);
+
+    // Use whichever is most recent
+    const candidates = [mainLatest, cronLatest, appLatest].filter(Boolean) as AgentLatest[];
+    if (candidates.length > 0) {
+      result[agentId] = candidates.reduce((a, b) => a.lastTs > b.lastTs ? a : b);
     }
   }
   

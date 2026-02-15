@@ -199,9 +199,15 @@ export async function GET(req: NextRequest) {
   const agentId = parts[1];
 
   try {
-    // Get main session messages
-    const filePath = findSessionFile(agentId, sessionKey);
-    const mainMessages = filePath ? parseTranscriptFile(filePath, limit) : [];
+    // Get main session messages (Telegram / webchat)
+    const mainKey = `agent:${agentId}:main`;
+    const mainFile = findSessionFile(agentId, mainKey);
+    const mainMessages = mainFile ? parseTranscriptFile(mainFile, limit) : [];
+
+    // Get app session messages (web app)
+    const appKey = `agent:${agentId}:app`;
+    const appFile = findSessionFile(agentId, appKey);
+    const appMessages = appFile ? parseTranscriptFile(appFile, limit) : [];
 
     // Get cron session messages (last 24h)
     const cronFiles = findCronSessionFiles(agentId);
@@ -210,8 +216,8 @@ export async function GET(req: NextRequest) {
       cronMessages.push(...parseCronTranscript(cf.path, cf.label));
     }
 
-    // Merge and sort by timestamp
-    const allMessages = [...mainMessages, ...cronMessages]
+    // Merge all sources and sort by timestamp
+    const allMessages = [...mainMessages, ...appMessages, ...cronMessages]
       .sort((a, b) => a.timestamp - b.timestamp)
       .slice(-limit);
 
