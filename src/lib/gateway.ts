@@ -91,10 +91,10 @@ async function connect(): Promise<WebSocket> {
                 minProtocol: PROTOCOL_VERSION,
                 maxProtocol: PROTOCOL_VERSION,
                 client: {
-                  id: 'webchat-ui',
+                  id: 'gateway-client',
                   version: '1.0.0',
                   platform: 'linux',
-                  mode: 'ui',
+                  mode: 'backend',
                 },
                 role: 'operator',
                 scopes: ['operator.read', 'operator.write'],
