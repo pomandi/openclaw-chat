@@ -5,6 +5,18 @@ import { Agent, ChatMessage, Attachment, getAgentEmoji, getAgentName, MAX_FILE_S
 import MarkdownRenderer from './MarkdownRenderer';
 import VoiceRecorder, { AudioBubblePlayer } from './VoiceRecorder';
 
+// Helper to extract text from multimodal content
+function extractText(content: any): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .filter((p: any) => p.type === 'text' && p.text)
+      .map((p: any) => p.text)
+      .join('\n');
+  }
+  return String(content || '');
+}
+
 interface ChatViewProps {
   agent: Agent;
   sessionKey: string;
@@ -125,6 +137,53 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
   }, [sessionKey]);
+
+  // Poll for new messages every 10 seconds (from other channels like Telegram)
+  useEffect(() => {
+    if (loadingHistory) return;
+    
+    const pollInterval = setInterval(async () => {
+      // Don't poll while sending (we'll get the response via stream)
+      if (sending) return;
+      
+      // Find the latest message timestamp
+      const lastTs = messages.length > 0 
+        ? Math.max(...messages.map(m => m.timestamp || 0))
+        : 0;
+      
+      if (!lastTs) return;
+      
+      try {
+        const res = await fetch(
+          `/api/gateway/history?sessionKey=${encodeURIComponent(sessionKey)}&since=${lastTs}`
+        );
+        if (!res.ok) return;
+        const data = await res.json();
+        const newMessages: ChatMessage[] = (data.messages || [])
+          .filter((m: any) => {
+            // Skip messages we already have (by content + role + close timestamp)
+            return !messages.some(existing => 
+              existing.role === m.role && 
+              existing.content === extractText(m.content) &&
+              Math.abs((existing.timestamp || 0) - (m.timestamp || 0)) < 5000
+            );
+          })
+          .map((m: any) => ({
+            ...m,
+            content: extractText(m.content),
+            status: 'sent' as const,
+          }));
+        
+        if (newMessages.length > 0) {
+          setMessages(prev => [...prev, ...newMessages]);
+        }
+      } catch {
+        // silent
+      }
+    }, 10_000);
+    
+    return () => clearInterval(pollInterval);
+  }, [sessionKey, messages, sending, loadingHistory]);
 
   // Save messages to localStorage
   useEffect(() => {

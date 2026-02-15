@@ -178,7 +178,7 @@ function parseCronTranscript(filePath: string, label: string): any[] {
   }];
 }
 
-// GET /api/gateway/history?sessionKey=agent:main:main&limit=50
+// GET /api/gateway/history?sessionKey=agent:main:main&limit=50&since=1234567890
 export async function GET(req: NextRequest) {
   if (!isAuthenticatedFromRequest(req)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -186,6 +186,7 @@ export async function GET(req: NextRequest) {
 
   const sessionKey = req.nextUrl.searchParams.get('sessionKey');
   const limit = Math.min(Math.max(parseInt(req.nextUrl.searchParams.get('limit') || '50', 10) || 50, 1), 200);
+  const since = parseInt(req.nextUrl.searchParams.get('since') || '0', 10) || 0;
 
   if (!sessionKey) {
     return NextResponse.json({ error: 'sessionKey required' }, { status: 400 });
@@ -217,9 +218,15 @@ export async function GET(req: NextRequest) {
     }
 
     // Merge all sources and sort by timestamp
-    const allMessages = [...mainMessages, ...appMessages, ...cronMessages]
-      .sort((a, b) => a.timestamp - b.timestamp)
-      .slice(-limit);
+    let allMessages = [...mainMessages, ...appMessages, ...cronMessages]
+      .sort((a, b) => a.timestamp - b.timestamp);
+
+    // Filter by since timestamp if provided (for polling new messages)
+    if (since > 0) {
+      allMessages = allMessages.filter(m => m.timestamp > since);
+    } else {
+      allMessages = allMessages.slice(-limit);
+    }
 
     return NextResponse.json({ messages: allMessages, sessionKey, total: allMessages.length });
   } catch (err: any) {
