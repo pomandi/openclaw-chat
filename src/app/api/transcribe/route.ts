@@ -23,12 +23,15 @@ export async function POST(req: NextRequest) {
     }
 
     // Extract base64 data and mime type from data URL
-    const dataUrlMatch = audio.match(/^data:([^;]+);base64,(.+)$/);
+    // Handle MIME params like "audio/webm;codecs=opus" → data:audio/webm;codecs=opus;base64,...
+    const dataUrlMatch = audio.match(/^data:(.*?);base64,(.+)$/);
     if (!dataUrlMatch) {
+      console.error(`[Transcribe] Invalid data URL format. Prefix: ${audio.substring(0, 80)}`);
       return NextResponse.json({ error: 'Invalid audio data URL format' }, { status: 400 });
     }
 
-    const mimeType = dataUrlMatch[1];
+    const fullMimeType = dataUrlMatch[1]; // e.g. "audio/webm;codecs=opus"
+    const mimeType = fullMimeType.split(';')[0]; // e.g. "audio/webm"
     const base64Data = dataUrlMatch[2];
     const audioBuffer = Buffer.from(base64Data, 'base64');
 

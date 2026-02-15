@@ -82,13 +82,19 @@ class TranscriptionHandler(http.server.BaseHTTPRequestHandler):
             f.write(audio_bytes)
             temp_path = f.name
 
+        import sys
+        print(f"[Whisper] Received {len(audio_bytes)} bytes, language={language}", file=sys.stderr, flush=True)
+
         try:
             # Convert to wav first (Whisper works better with wav)
             wav_path = temp_path.replace('.webm', '.wav')
-            subprocess.run(
+            ffmpeg_result = subprocess.run(
                 ['ffmpeg', '-i', temp_path, '-ar', '16000', '-ac', '1', '-y', wav_path],
                 capture_output=True, timeout=30
             )
+            print(f"[Whisper] ffmpeg rc={ffmpeg_result.returncode}, wav exists={os.path.exists(wav_path)}", file=sys.stderr, flush=True)
+            if ffmpeg_result.returncode != 0:
+                print(f"[Whisper] ffmpeg stderr: {ffmpeg_result.stderr.decode()[:300]}", file=sys.stderr, flush=True)
 
             # Run Whisper (use full path since systemd may not have ~/.local/bin in PATH)
             whisper_bin = os.path.expanduser('~/.local/bin/whisper')
@@ -99,10 +105,15 @@ class TranscriptionHandler(http.server.BaseHTTPRequestHandler):
                  '--output_format', 'txt', '--output_dir', '/tmp/whisper_out'],
                 capture_output=True, text=True, timeout=60
             )
+            print(f"[Whisper] whisper rc={result.returncode}", file=sys.stderr, flush=True)
+            if result.stderr:
+                print(f"[Whisper] whisper stderr: {result.stderr[:300]}", file=sys.stderr, flush=True)
 
             # Read output
             txt_path = wav_path.replace('.wav', '.txt').split('/')[-1]
             txt_full = os.path.join('/tmp/whisper_out', txt_path)
+            
+            print(f"[Whisper] Looking for output: {txt_full}, exists={os.path.exists(txt_full)}", file=sys.stderr, flush=True)
             
             if os.path.exists(txt_full):
                 with open(txt_full) as f:
@@ -113,6 +124,8 @@ class TranscriptionHandler(http.server.BaseHTTPRequestHandler):
                 text = result.stdout.strip() if result.stdout else ''
                 if not text:
                     text = f"[Transcription failed: {result.stderr[:200]}]"
+            
+            print(f"[Whisper] Result text: '{text[:100]}'", file=sys.stderr, flush=True)
 
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
@@ -137,7 +150,9 @@ class TranscriptionHandler(http.server.BaseHTTPRequestHandler):
                 except: pass
 
     def log_message(self, format, *args):
-        pass  # Suppress access logs
+        import sys
+        sys.stderr.write("%s - - [%s] %s\n" % (self.client_address[0], self.log_date_time_string(), format%args))
+        sys.stderr.flush()
 
 if __name__ == '__main__':
     os.makedirs('/tmp/whisper_out', exist_ok=True)
