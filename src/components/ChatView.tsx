@@ -17,6 +17,34 @@ function extractText(content: any): string {
   return String(content || '');
 }
 
+// Helper to format dates for separators
+function formatDateSeparator(date: Date): string {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterday = new Date(today.getTime() - 86400000);
+  const msgDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  
+  if (msgDate.getTime() === today.getTime()) return 'Today';
+  if (msgDate.getTime() === yesterday.getTime()) return 'Yesterday';
+  
+  return date.toLocaleDateString([], { 
+    day: 'numeric', 
+    month: 'short',
+    ...(date.getFullYear() !== now.getFullYear() ? { year: 'numeric' } : {})
+  });
+}
+
+// Helper to check if messages should be grouped
+function shouldGroupMessages(current: ChatMessage, previous: ChatMessage): boolean {
+  if (!previous) return false;
+  if (current.role !== previous.role) return false;
+  if (current.role === 'system') return false;
+  
+  // Group if messages are within 2 minutes of each other
+  const timeDiff = (current.timestamp || 0) - (previous.timestamp || 0);
+  return timeDiff < 120000; // 2 minutes
+}
+
 interface ChatViewProps {
   agent: Agent;
   sessionKey: string;
@@ -36,11 +64,32 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
   const [dragOver, setDragOver] = useState(false);
   const [voiceMode, setVoiceMode] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(true);
+  
+  // Pull to refresh state
+  const [pullDistance, setPullDistance] = useState(0);
+  const [isPulling, setIsPulling] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  
+  // Context menu state
+  const [contextMenu, setContextMenu] = useState<{
+    visible: boolean;
+    message: ChatMessage | null;
+    x: number;
+    y: number;
+  }>({
+    visible: false,
+    message: null,
+    x: 0,
+    y: 0,
+  });
+  
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const pullStartY = useRef<number>(0);
+  const longPressTimer = useRef<NodeJS.Timeout | null>(null);
 
   const agentEmoji = getAgentEmoji(agent.id, agent);
   const agentName = getAgentName(agent);
@@ -138,52 +187,84 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
     };
   }, [sessionKey]);
 
-  // Poll for new messages every 10 seconds (from other channels like Telegram)
+  // SSE connection for real-time events (replaces polling)
   useEffect(() => {
     if (loadingHistory) return;
     
-    const pollInterval = setInterval(async () => {
-      // Don't poll while sending (we'll get the response via stream)
-      if (sending) return;
-      
-      // Find the latest message timestamp
-      const lastTs = messages.length > 0 
-        ? Math.max(...messages.map(m => m.timestamp || 0))
-        : 0;
-      
-      if (!lastTs) return;
-      
-      try {
-        const res = await fetch(
-          `/api/gateway/history?sessionKey=${encodeURIComponent(sessionKey)}&since=${lastTs}`
-        );
-        if (!res.ok) return;
-        const data = await res.json();
-        const newMessages: ChatMessage[] = (data.messages || [])
-          .filter((m: any) => {
-            // Skip messages we already have (by content + role + close timestamp)
-            return !messages.some(existing => 
-              existing.role === m.role && 
-              existing.content === extractText(m.content) &&
-              Math.abs((existing.timestamp || 0) - (m.timestamp || 0)) < 5000
-            );
-          })
-          .map((m: any) => ({
-            ...m,
-            content: extractText(m.content),
-            status: 'sent' as const,
-          }));
-        
-        if (newMessages.length > 0) {
-          setMessages(prev => [...prev, ...newMessages]);
-        }
-      } catch {
-        // silent
-      }
-    }, 10_000);
+    console.log('[SSE] Connecting to events stream for sessionKey:', sessionKey);
+    const eventSource = new EventSource(`/api/gateway/events?sessionKey=${encodeURIComponent(sessionKey)}`);
     
-    return () => clearInterval(pollInterval);
-  }, [sessionKey, messages, sending, loadingHistory]);
+    eventSource.onopen = () => {
+      console.log('[SSE] Connected to events stream');
+    };
+    
+    eventSource.onmessage = (e) => {
+      try {
+        const payload = JSON.parse(e.data);
+        console.log('[SSE] Received event:', payload);
+        
+        // Filter by sessionKey (server should already filter, but double-check)
+        if (payload.sessionKey !== sessionKey) {
+          console.log('[SSE] Ignoring event for different session:', payload.sessionKey);
+          return;
+        }
+        
+        if (payload.state === 'delta') {
+          // Streaming text update
+          const text = payload.message?.content?.[0]?.text || 
+                      payload.message?.content?.text ||
+                      payload.message?.content ||
+                      '';
+          setStreamText(prev => prev + text);
+          setStreaming(true);
+        } else if (payload.state === 'final') {
+          // Add completed message
+          const content = payload.message?.content;
+          const text = Array.isArray(content) 
+            ? content.filter(p => p.type === 'text').map(p => p.text).join('')
+            : typeof content === 'string' ? content : String(content || '');
+          
+          if (text?.trim()) {
+            setMessages(prev => [...prev, {
+              id: `asst_${Date.now()}_${Math.random()}`,
+              role: 'assistant',
+              content: text,
+              timestamp: Date.now(),
+              status: 'sent',
+            }]);
+          }
+          setStreaming(false);
+          setStreamText('');
+          setSending(false);
+        } else if (payload.state === 'error') {
+          // Handle error
+          const errorText = payload.errorMessage || 'Agent error occurred';
+          setMessages(prev => [...prev, {
+            id: `err_${Date.now()}`,
+            role: 'system',
+            content: errorText,
+            timestamp: Date.now(),
+            status: 'error',
+          }]);
+          setStreaming(false);
+          setStreamText('');
+          setSending(false);
+        }
+      } catch (err) {
+        console.error('[SSE] Failed to parse event:', err, e.data);
+      }
+    };
+    
+    eventSource.onerror = (err) => {
+      console.error('[SSE] Connection error:', err);
+      // EventSource will automatically reconnect
+    };
+    
+    return () => {
+      console.log('[SSE] Closing events stream');
+      eventSource.close();
+    };
+  }, [sessionKey, loadingHistory]);
 
   // Save messages to localStorage
   useEffect(() => {
@@ -263,7 +344,7 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
     handleFileSelect(e.dataTransfer.files);
   }
 
-  // Send message with streaming
+  // Send message via WebSocket (non-blocking, response comes via SSE)
   async function handleSend(e?: FormEvent, retryMsg?: ChatMessage) {
     e?.preventDefault();
     const text = retryMsg?.content || input.trim();
@@ -273,11 +354,7 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
     
     // If already sending, allow force-reset by tapping send again
     if (sending) {
-      // Force cancel current request and allow new one
-      if (abortRef.current) {
-        console.warn('[Chat] Force-cancelling stuck request');
-        abortRef.current.abort();
-      }
+      console.warn('[Chat] Force-cancelling stuck request');
       setSending(false);
       setStreaming(false);
       setStreamText('');
@@ -286,7 +363,7 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
 
     const agentId = sessionKey.split(':')[1] || agent.id;
 
-    // Add user message
+    // Add user message to UI immediately
     const userMsg: ChatMessage = retryMsg || {
       id: `user_${Date.now()}`,
       role: 'user',
@@ -314,19 +391,16 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
     // Reset textarea height
     if (inputRef.current) inputRef.current.style.height = 'auto';
 
-    const controller = new AbortController();
-    abortRef.current = controller;
-
-    // Safety timeout: auto-reset sending state after 60s to prevent stuck UI
+    // Safety timeout: auto-reset sending state after 30s
     const safetyTimeout = setTimeout(() => {
-      console.warn('[Chat] Safety timeout: resetting sending state after 60s');
+      console.warn('[Chat] Safety timeout: resetting sending state after 30s');
       setSending(false);
       setStreaming(false);
       setStreamText('');
-      controller.abort();
-    }, 60_000);
+    }, 30_000);
 
     try {
+      // Send via API (non-blocking) - will get ACK, response comes via SSE
       const res = await fetch('/api/gateway/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -340,15 +414,10 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
             size: a.size,
             mimeType: a.mimeType,
             dataUrl: a.dataUrl,
+            duration: a.duration,
           })),
         }),
-        signal: controller.signal,
       });
-
-      // Update user message status
-      setMessages(prev => prev.map(m =>
-        m.id === userMsg.id ? { ...m, status: 'sent' as const } : m
-      ));
 
       if (!res.ok) {
         let errBody = '';
@@ -357,64 +426,17 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
         throw new Error(parsed?.error || `Server error: ${res.status}`);
       }
 
-      if (!res.body) {
-        throw new Error('No response stream');
-      }
+      // Mark user message as sent (successful API call)
+      setMessages(prev => prev.map(m =>
+        m.id === userMsg.id ? { ...m, status: 'sent' as const } : m
+      ));
 
-      // Read SSE stream
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let accumulated = '';
-      let buffer = '';
-      setStreaming(true);
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6);
-            if (data === '[DONE]') continue;
-            
-            try {
-              const json = JSON.parse(data);
-              const delta = json.choices?.[0]?.delta?.content;
-              if (delta) {
-                accumulated += delta;
-                setStreamText(accumulated);
-              }
-            } catch {
-              // ignore parse errors for partial JSON
-            }
-          }
-        }
-      }
-
-      // Add final assistant message
-      if (accumulated.trim()) {
-        const assistantMsg: ChatMessage = {
-          id: `asst_${Date.now()}`,
-          role: 'assistant',
-          content: accumulated,
-          timestamp: Date.now(),
-          status: 'sent',
-        };
-        setMessages(prev => [...prev, assistantMsg]);
-      }
+      // Response will come via SSE — setSending(false) will be called when 'final' event arrives
+      // Don't call setSending(false) here, wait for SSE events
 
     } catch (err: any) {
       console.error('[Chat] send error:', err);
-      
-      // For abort errors, check if we got any streamed content
-      if (err.name === 'AbortError') {
-        // If we had partial content, still save it
-        // Don't return silently — show timeout message
-      }
+      clearTimeout(safetyTimeout);
       
       // Mark user message as error
       setMessages(prev => prev.map(m =>
@@ -423,9 +445,7 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
       setRetryMessage(userMsg);
 
       // Add error message
-      const errorText = err.name === 'AbortError' 
-        ? 'Request timed out. Tap retry to try again.'
-        : `Failed to send: ${err.message}`;
+      const errorText = `Failed to send: ${err.message}`;
       setMessages(prev => [...prev, {
         id: `err_${Date.now()}`,
         role: 'system',
@@ -433,14 +453,15 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
         timestamp: Date.now(),
         status: 'error',
       }]);
-    } finally {
-      clearTimeout(safetyTimeout);
+      
+      // Reset state since we failed before agent processing
       setSending(false);
       setStreaming(false);
       setStreamText('');
-      abortRef.current = null;
-      scrollToBottom(true);
     }
+    
+    // Note: We don't clear safetyTimeout here because we want it to run
+    // It will be cleared when SSE events reset the state
   }
 
   function handleRetry() {
@@ -481,7 +502,7 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
     }
   }
 
-  // Voice message handler
+  // Voice message handler (updated for WebSocket flow)
   function handleVoiceSend(dataUrl: string, duration: number, mimeType: string) {
     const audioAttachment: Attachment = {
       id: `att_voice_${Date.now()}`,
@@ -508,8 +529,6 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
     setStreaming(false);
     setStreamText('');
 
-    const controller = new AbortController();
-    abortRef.current = controller;
     const agentId = sessionKey.split(':')[1] || agent.id;
 
     (async () => {
@@ -539,7 +558,7 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
           m.id === userMsg.id ? { ...m, content: displayText } : m
         ));
 
-        // Step 2: Send to agent - use transcribed text if available, otherwise send audio
+        // Step 2: Send to agent via WebSocket (response will come via SSE)
         const messageToSend = transcribedText || '[Voice message - audio attached]';
         const res = await fetch('/api/gateway/chat', {
           method: 'POST',
@@ -559,71 +578,37 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
               }],
             } : {}),
           }),
-          signal: controller.signal,
         });
 
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(`Server error: ${res.status} - ${errText}`);
+        }
+
+        // Mark user message as sent
         setMessages(prev => prev.map(m =>
           m.id === userMsg.id ? { ...m, status: 'sent' as const } : m
         ));
 
-        if (!res.ok) throw new Error(`Server error: ${res.status}`);
-        if (!res.body) throw new Error('No response stream');
+        // Response will come via SSE — don't reset sending state here
 
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let accumulated = '';
-        let buffer = '';
-        setStreaming(true);
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              const data = line.slice(6);
-              if (data === '[DONE]') continue;
-              try {
-                const json = JSON.parse(data);
-                const delta = json.choices?.[0]?.delta?.content;
-                if (delta) {
-                  accumulated += delta;
-                  setStreamText(accumulated);
-                }
-              } catch { /* */ }
-            }
-          }
-        }
-
-        if (accumulated.trim()) {
-          setMessages(prev => [...prev, {
-            id: `asst_${Date.now()}`,
-            role: 'assistant',
-            content: accumulated,
-            timestamp: Date.now(),
-            status: 'sent',
-          }]);
-        }
       } catch (err: any) {
-        if (err.name === 'AbortError') return;
+        console.error('[Voice] send error:', err);
         setMessages(prev => prev.map(m =>
           m.id === userMsg.id ? { ...m, status: 'error' as const } : m
         ));
         setMessages(prev => [...prev, {
           id: `err_${Date.now()}`,
           role: 'system',
-          content: `Failed to send: ${err.message}`,
+          content: `Failed to send voice message: ${err.message}`,
           timestamp: Date.now(),
           status: 'error',
         }]);
-      } finally {
+        
+        // Reset state since we failed before agent processing
         setSending(false);
         setStreaming(false);
         setStreamText('');
-        abortRef.current = null;
-        scrollToBottom(true);
       }
     })();
   }

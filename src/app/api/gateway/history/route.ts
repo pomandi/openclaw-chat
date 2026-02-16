@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { isAuthenticatedFromRequest } from '@/lib/auth';
+import { getGatewayWS } from '@/lib/gateway-ws';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -200,6 +201,43 @@ export async function GET(req: NextRequest) {
   const agentId = parts[1];
 
   try {
+    const gw = getGatewayWS();
+    let wsMessages: any[] = [];
+    
+    // Try to get history from WebSocket first
+    try {
+      const result = await gw.chatHistory(sessionKey, limit);
+      if (result && result.messages) {
+        wsMessages = result.messages.map((m: any) => ({
+          id: m.id || `ws_${Date.now()}_${Math.random()}`,
+          role: m.role,
+          content: typeof m.content === 'string' ? m.content : 
+                  Array.isArray(m.content) ? m.content.filter((p: any) => p.type === 'text').map((p: any) => p.text).join('') : 
+                  String(m.content || ''),
+          timestamp: m.timestamp ? (typeof m.timestamp === 'string' ? new Date(m.timestamp).getTime() : m.timestamp) : Date.now(),
+          status: 'sent' as const,
+        }));
+      }
+    } catch (wsErr) {
+      console.warn('[API] WebSocket history failed, falling back to file-based:', wsErr);
+    }
+
+    // If WebSocket provided messages, use them
+    if (wsMessages.length > 0) {
+      // Filter by since timestamp if provided
+      if (since > 0) {
+        wsMessages = wsMessages.filter(m => m.timestamp > since);
+      }
+      
+      return NextResponse.json({ 
+        messages: wsMessages.slice(-limit), 
+        sessionKey, 
+        total: wsMessages.length,
+        source: 'websocket'
+      });
+    }
+
+    // Fallback to file-based history (original implementation)
     // Get main session messages (Telegram / webchat)
     const mainKey = `agent:${agentId}:main`;
     const mainFile = findSessionFile(agentId, mainKey);
@@ -228,7 +266,12 @@ export async function GET(req: NextRequest) {
       allMessages = allMessages.slice(-limit);
     }
 
-    return NextResponse.json({ messages: allMessages, sessionKey, total: allMessages.length });
+    return NextResponse.json({ 
+      messages: allMessages, 
+      sessionKey, 
+      total: allMessages.length,
+      source: 'file'
+    });
   } catch (err: any) {
     console.error('[API] history error:', err.message);
     return NextResponse.json({ messages: [], sessionKey });
