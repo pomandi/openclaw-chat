@@ -22,7 +22,9 @@ class GatewayWSClient extends EventEmitter {
       try { this.ws.close(); } catch {}
     }
     
-    this.ws = new WebSocket(GATEWAY_WS_URL);
+    this.ws = new WebSocket(GATEWAY_WS_URL, {
+      headers: { origin: 'https://app.pomandi.com' },
+    });
     
     this.ws.on('open', () => this.handshake());
     this.ws.on('message', (data) => this.handleMessage(data.toString()));
