@@ -40,7 +40,7 @@ class GatewayWSClient extends EventEmitter {
         minProtocol: 3,
         maxProtocol: 3,
         client: {
-          id: 'openclaw-chat-web',
+          id: 'webchat-ui',
           version: '1.0.0',
           platform: 'web',
           mode: 'operator',
