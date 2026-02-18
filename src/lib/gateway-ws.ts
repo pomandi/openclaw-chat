@@ -34,7 +34,7 @@ class GatewayWSClient extends EventEmitter {
   
   private async handshake() {
     const id = this.genId();
-    this.send({
+    const connectReq = {
       type: 'req',
       id,
       method: 'connect',
@@ -52,8 +52,18 @@ class GatewayWSClient extends EventEmitter {
         caps: [],
         auth: { token: GATEWAY_TOKEN },
       },
+    };
+    // Register in pendingRequests so hello-ok response is handled
+    const timeout = setTimeout(() => {
+      this.pendingRequests.delete(id);
+      console.error('[GW-WS] Handshake timed out after 15s');
+    }, 15000);
+    this.pendingRequests.set(id, {
+      resolve: () => {},
+      reject: (err: Error) => console.error('[GW-WS] Handshake rejected:', err.message),
+      timeout,
     });
-    // Wait for hello-ok (handled in handleMessage)
+    this.send(connectReq);
   }
   
   private handleMessage(raw: string) {
@@ -100,7 +110,18 @@ class GatewayWSClient extends EventEmitter {
   
   // Send a request and wait for response
   async request(method: string, params: any, timeoutMs = 30000): Promise<any> {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+    // Wait up to 10s for handshake to complete if WS is open but not yet connected
+    if (this.ws?.readyState === WebSocket.OPEN && !this.connected) {
+      await new Promise<void>((resolve) => {
+        const check = () => {
+          if (this.connected) { resolve(); return; }
+          setTimeout(check, 100);
+        };
+        setTimeout(() => resolve(), 10000); // give up after 10s
+        check();
+      });
+    }
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.connected) {
       throw new Error('Gateway not connected');
     }
     
