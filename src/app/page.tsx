@@ -4,10 +4,13 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import LoginScreen from '@/components/LoginScreen';
 import AgentSidebar, { AgentUnreadInfo } from '@/components/AgentSidebar';
 import ChatView from '@/components/ChatView';
+import TasksView from '@/components/TasksView';
 import { Agent, AgentsListResult } from '@/lib/types';
 
 const LAST_SEEN_KEY = 'openclaw-lastSeen';
 const UNREAD_POLL_INTERVAL = 30_000; // 30 seconds
+
+type AppView = 'chat' | 'tasks';
 
 function loadLastSeen(): Record<string, number> {
   try {
@@ -34,6 +37,7 @@ export default function Home() {
   const [mainKey, setMainKey] = useState<string>('');
   const [unreadMap, setUnreadMap] = useState<Record<string, AgentUnreadInfo>>({});
   const [lastSeenMap, setLastSeenMap] = useState<Record<string, number>>(loadLastSeen);
+  const [activeView, setActiveView] = useState<AppView>('chat');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Fetch unread info
@@ -65,7 +69,7 @@ export default function Home() {
     }
     setSelectedAgentId(agentId);
     setSidebarOpen(false);
-    
+
     // Mark as read when selecting
     if (agentId) {
       markAsRead(agentId);
@@ -111,13 +115,13 @@ export default function Home() {
   // Start polling for unread when authenticated
   useEffect(() => {
     if (!authenticated) return;
-    
+
     // Initial fetch
     fetchUnread();
-    
+
     // Poll every 30s
     pollRef.current = setInterval(fetchUnread, UNREAD_POLL_INTERVAL);
-    
+
     // Also fetch on visibility change (tab becomes active)
     function onVisibility() {
       if (document.visibilityState === 'visible') {
@@ -125,7 +129,7 @@ export default function Home() {
       }
     }
     document.addEventListener('visibilitychange', onVisibility);
-    
+
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
       document.removeEventListener('visibilitychange', onVisibility);
@@ -197,67 +201,107 @@ export default function Home() {
   }
 
   return (
-    <div className="flex h-dvh overflow-hidden" style={{ height: '100dvh' }}>
-      {/* Sidebar - desktop: always visible */}
-      <div className="hidden md:flex md:flex-col w-72 shrink-0 min-h-0 border-r border-[var(--border)]">
-        <AgentSidebar
-          agents={agents}
-          selectedAgentId={selectedAgentId}
-          onSelectAgent={selectAgent}
-          loading={loadingAgents}
-          unreadMap={unreadMap}
-          lastSeenMap={lastSeenMap}
-        />
-      </div>
+    <div className="flex flex-col h-dvh overflow-hidden" style={{ height: '100dvh' }}>
+      {/* Navigation Tabs - always visible on top */}
+      <NavTabs activeView={activeView} onChangeView={setActiveView} />
 
-      {/* Mobile: full-screen agent list when no agent selected */}
-      {!selectedAgentId && (
-        <div className="flex flex-col flex-1 min-h-0 md:hidden">
-          <AgentSidebar
-            agents={agents}
-            selectedAgentId={selectedAgentId}
-            onSelectAgent={selectAgent}
-            loading={loadingAgents}
-            unreadMap={unreadMap}
-            lastSeenMap={lastSeenMap}
-          />
+      {/* Content based on active view */}
+      {activeView === 'tasks' ? (
+        <div className="flex-1 min-h-0 overflow-hidden">
+          <TasksView />
         </div>
-      )}
-
-      {/* Mobile: sidebar overlay */}
-      {selectedAgentId && sidebarOpen && (
-        <div className="fixed inset-0 z-50 md:hidden">
-          <div
-            className="absolute inset-0 bg-black/50 backdrop-blur-sm"
-            onClick={() => setSidebarOpen(false)}
-          />
-          <div className="absolute left-0 top-0 bottom-0 w-[85vw] max-w-80 shadow-2xl animate-slide-in-left">
+      ) : (
+        <div className="flex flex-1 min-h-0 overflow-hidden">
+          {/* Sidebar - desktop: always visible */}
+          <div className="hidden md:flex md:flex-col w-72 shrink-0 min-h-0 border-r border-[var(--border)]">
             <AgentSidebar
               agents={agents}
               selectedAgentId={selectedAgentId}
               onSelectAgent={selectAgent}
-              onClose={() => setSidebarOpen(false)}
               loading={loadingAgents}
               unreadMap={unreadMap}
               lastSeenMap={lastSeenMap}
             />
           </div>
+
+          {/* Mobile: full-screen agent list when no agent selected */}
+          {!selectedAgentId && (
+            <div className="flex flex-col flex-1 min-h-0 md:hidden">
+              <AgentSidebar
+                agents={agents}
+                selectedAgentId={selectedAgentId}
+                onSelectAgent={selectAgent}
+                loading={loadingAgents}
+                unreadMap={unreadMap}
+                lastSeenMap={lastSeenMap}
+              />
+            </div>
+          )}
+
+          {/* Mobile: sidebar overlay */}
+          {selectedAgentId && sidebarOpen && (
+            <div className="fixed inset-0 z-50 md:hidden">
+              <div
+                className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+                onClick={() => setSidebarOpen(false)}
+              />
+              <div className="absolute left-0 top-0 bottom-0 w-[85vw] max-w-80 shadow-2xl animate-slide-in-left">
+                <AgentSidebar
+                  agents={agents}
+                  selectedAgentId={selectedAgentId}
+                  onSelectAgent={selectAgent}
+                  onClose={() => setSidebarOpen(false)}
+                  loading={loadingAgents}
+                  unreadMap={unreadMap}
+                  lastSeenMap={lastSeenMap}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Main content */}
+          <div className={`flex-1 min-w-0 flex flex-col ${!selectedAgentId ? 'hidden md:flex' : 'flex'}`}>
+            {selectedAgent ? (
+              <ChatView
+                agent={selectedAgent}
+                sessionKey={getSessionKey(selectedAgent.id)}
+                onOpenSidebar={() => setSidebarOpen(true)}
+                onBack={goBack}
+              />
+            ) : (
+              <EmptyState onOpenSidebar={() => setSidebarOpen(true)} />
+            )}
+          </div>
         </div>
       )}
+    </div>
+  );
+}
 
-      {/* Main content */}
-      <div className={`flex-1 min-w-0 flex flex-col ${!selectedAgentId ? 'hidden md:flex' : 'flex'}`}>
-        {selectedAgent ? (
-          <ChatView
-            agent={selectedAgent}
-            sessionKey={getSessionKey(selectedAgent.id)}
-            onOpenSidebar={() => setSidebarOpen(true)}
-            onBack={goBack}
-          />
-        ) : (
-          <EmptyState onOpenSidebar={() => setSidebarOpen(true)} />
-        )}
-      </div>
+function NavTabs({ activeView, onChangeView }: { activeView: AppView; onChangeView: (view: AppView) => void }) {
+  return (
+    <div className="shrink-0 flex items-center gap-1 px-4 py-2 bg-[var(--bg-secondary)] border-b border-[var(--border)] safe-top">
+      <span className="text-xl mr-2">🐾</span>
+      <button
+        onClick={() => onChangeView('chat')}
+        className={`px-4 py-1.5 text-sm font-medium rounded-lg transition-colors ${
+          activeView === 'chat'
+            ? 'bg-[var(--accent)] text-white'
+            : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]'
+        }`}
+      >
+        Chat
+      </button>
+      <button
+        onClick={() => onChangeView('tasks')}
+        className={`px-4 py-1.5 text-sm font-medium rounded-lg transition-colors ${
+          activeView === 'tasks'
+            ? 'bg-[var(--accent)] text-white'
+            : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]'
+        }`}
+      >
+        Tasks
+      </button>
     </div>
   );
 }
@@ -265,7 +309,7 @@ export default function Home() {
 function EmptyState({ onOpenSidebar }: { onOpenSidebar: () => void }) {
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center px-4 py-3 bg-[var(--bg-secondary)] border-b border-[var(--border)] md:hidden safe-top">
+      <div className="flex items-center px-4 py-3 bg-[var(--bg-secondary)] border-b border-[var(--border)] md:hidden">
         <button
           onClick={onOpenSidebar}
           className="p-2 -ml-2 hover:bg-[var(--bg-hover)] rounded-lg transition-colors"
