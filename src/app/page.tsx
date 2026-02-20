@@ -8,6 +8,7 @@ import TasksView from '@/components/TasksView';
 import { Agent, AgentsListResult } from '@/lib/types';
 
 const LAST_SEEN_KEY = 'openclaw-lastSeen';
+const SELECTED_AGENT_KEY = 'openclaw-selectedAgent';
 const UNREAD_POLL_INTERVAL = 30_000; // 30 seconds
 
 type AppView = 'chat' | 'tasks';
@@ -30,7 +31,16 @@ function saveLastSeen(map: Record<string, number>) {
 export default function Home() {
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const [agents, setAgents] = useState<Agent[]>([]);
-  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(() => {
+    try {
+      const stored = typeof window !== 'undefined' ? localStorage.getItem(SELECTED_AGENT_KEY) : null;
+      if (stored) {
+        localStorage.removeItem(SELECTED_AGENT_KEY);
+        return stored;
+      }
+    } catch {}
+    return null;
+  });
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [loadingAgents, setLoadingAgents] = useState(true);
   const [defaultAgentId, setDefaultAgentId] = useState<string>('main');
@@ -180,6 +190,16 @@ export default function Home() {
     fetchUnread();
   }, [fetchUnread]);
 
+  // Refresh: save current agent to localStorage, then reload
+  const handleRefresh = useCallback(() => {
+    if (selectedAgentId) {
+      try {
+        localStorage.setItem(SELECTED_AGENT_KEY, selectedAgentId);
+      } catch {}
+    }
+    window.location.reload();
+  }, [selectedAgentId]);
+
   const selectedAgent = agents.find(a => a.id === selectedAgentId);
 
   // Loading state
@@ -218,6 +238,7 @@ export default function Home() {
               agents={agents}
               selectedAgentId={selectedAgentId}
               onSelectAgent={selectAgent}
+              onRefresh={handleRefresh}
               loading={loadingAgents}
               unreadMap={unreadMap}
               lastSeenMap={lastSeenMap}
@@ -231,6 +252,7 @@ export default function Home() {
                 agents={agents}
                 selectedAgentId={selectedAgentId}
                 onSelectAgent={selectAgent}
+                onRefresh={handleRefresh}
                 loading={loadingAgents}
                 unreadMap={unreadMap}
                 lastSeenMap={lastSeenMap}
@@ -251,6 +273,7 @@ export default function Home() {
                   selectedAgentId={selectedAgentId}
                   onSelectAgent={selectAgent}
                   onClose={() => setSidebarOpen(false)}
+                  onRefresh={handleRefresh}
                   loading={loadingAgents}
                   unreadMap={unreadMap}
                   lastSeenMap={lastSeenMap}

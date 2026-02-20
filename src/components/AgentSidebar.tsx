@@ -14,6 +14,7 @@ interface AgentSidebarProps {
   selectedAgentId: string | null;
   onSelectAgent: (agentId: string) => void;
   onClose?: () => void;
+  onRefresh?: () => void;
   loading?: boolean;
   unreadMap?: Record<string, AgentUnreadInfo>;
   lastSeenMap?: Record<string, number>;
@@ -30,7 +31,7 @@ function formatTimeAgo(ts: number): string {
   return new Date(ts).toLocaleDateString([], { day: 'numeric', month: 'short' });
 }
 
-export default function AgentSidebar({ agents, selectedAgentId, onSelectAgent, onClose, loading, unreadMap, lastSeenMap }: AgentSidebarProps) {
+export default function AgentSidebar({ agents, selectedAgentId, onSelectAgent, onClose, onRefresh, loading, unreadMap, lastSeenMap }: AgentSidebarProps) {
   // Calculate total unread count
   const totalUnread = agents.filter(a => {
     const info = unreadMap?.[a.id];
@@ -85,7 +86,7 @@ export default function AgentSidebar({ agents, selectedAgentId, onSelectAgent, o
 
       {/* Agent List */}
       <div className="relative flex-1 min-h-0">
-        <div className="absolute inset-0 overflow-y-auto overscroll-contain py-1" style={{ WebkitOverflowScrolling: 'touch' }}>
+        <div className="absolute inset-0 overflow-y-auto overscroll-contain py-1 pb-14" style={{ WebkitOverflowScrolling: 'touch' }}>
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <div className="flex gap-1.5">
@@ -164,6 +165,22 @@ export default function AgentSidebar({ agents, selectedAgentId, onSelectAgent, o
         )}
         </div>
       </div>
+
+      {/* Refresh Button - bottom bar */}
+      {onRefresh && (
+        <div className="shrink-0 px-4 py-3 border-t border-[var(--border)] bg-[var(--bg-secondary)]">
+          <button
+            onClick={onRefresh}
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-hover)] rounded-lg transition-colors active:scale-95"
+            aria-label="Refresh page"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h5M20 20v-5h-5M4.93 9a8 8 0 0113.14 0M19.07 15a8 8 0 01-13.14 0" />
+            </svg>
+            <span>Refresh</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 }
