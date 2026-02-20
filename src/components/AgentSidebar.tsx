@@ -14,7 +14,6 @@ interface AgentSidebarProps {
   selectedAgentId: string | null;
   onSelectAgent: (agentId: string) => void;
   onClose?: () => void;
-  onRefresh?: () => void;
   loading?: boolean;
   unreadMap?: Record<string, AgentUnreadInfo>;
   lastSeenMap?: Record<string, number>;
@@ -31,7 +30,7 @@ function formatTimeAgo(ts: number): string {
   return new Date(ts).toLocaleDateString([], { day: 'numeric', month: 'short' });
 }
 
-export default function AgentSidebar({ agents, selectedAgentId, onSelectAgent, onClose, onRefresh, loading, unreadMap, lastSeenMap }: AgentSidebarProps) {
+export default function AgentSidebar({ agents, selectedAgentId, onSelectAgent, onClose, loading, unreadMap, lastSeenMap }: AgentSidebarProps) {
   // Calculate total unread count
   const totalUnread = agents.filter(a => {
     const info = unreadMap?.[a.id];
@@ -60,33 +59,33 @@ export default function AgentSidebar({ agents, selectedAgentId, onSelectAgent, o
 
   return (
     <div className="flex flex-col flex-1 min-h-0 w-full bg-[var(--bg-secondary)]">
-      {/* Header */}
-      <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)] bg-[var(--bg-secondary)] safe-top shrink-0">
-        <div className="flex items-center gap-3">
-          <span className="text-2xl">🐾</span>
-          <h1 className="text-lg font-bold text-white">OpenClaw</h1>
-          {totalUnread > 0 && (
-            <span className="min-w-5 h-5 px-1.5 flex items-center justify-center bg-[var(--accent)] text-white text-[11px] font-bold rounded-full animate-fade-in">
-              {totalUnread}
-            </span>
-          )}
-        </div>
-        {onClose && (
+      {/* Mobile: close button when overlay */}
+      {onClose && (
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)] bg-[var(--bg-secondary)] shrink-0 md:hidden">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">🐾</span>
+            <h1 className="text-lg font-bold text-white">Agents</h1>
+            {totalUnread > 0 && (
+              <span className="min-w-5 h-5 px-1.5 flex items-center justify-center bg-[var(--accent)] text-white text-[11px] font-bold rounded-full animate-fade-in">
+                {totalUnread}
+              </span>
+            )}
+          </div>
           <button
             onClick={onClose}
-            className="flex items-center justify-center w-10 h-10 hover:bg-[var(--bg-hover)] rounded-xl transition-colors md:hidden active:scale-95"
+            className="flex items-center justify-center w-10 h-10 hover:bg-[var(--bg-hover)] rounded-xl transition-colors active:scale-95"
             aria-label="Close sidebar"
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Agent List */}
       <div className="relative flex-1 min-h-0">
-        <div className="absolute inset-0 overflow-y-auto overscroll-contain py-1 pb-14" style={{ WebkitOverflowScrolling: 'touch' }}>
+        <div className="absolute inset-0 overflow-y-auto overscroll-contain py-1" style={{ WebkitOverflowScrolling: 'touch' }}>
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <div className="flex gap-1.5">
@@ -166,21 +165,7 @@ export default function AgentSidebar({ agents, selectedAgentId, onSelectAgent, o
         </div>
       </div>
 
-      {/* Refresh Button - bottom bar */}
-      {onRefresh && (
-        <div className="shrink-0 px-4 py-3 border-t border-[var(--border)] bg-[var(--bg-secondary)]">
-          <button
-            onClick={onRefresh}
-            className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-hover)] rounded-lg transition-colors active:scale-95"
-            aria-label="Refresh page"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h5M20 20v-5h-5M4.93 9a8 8 0 0113.14 0M19.07 15a8 8 0 01-13.14 0" />
-            </svg>
-            <span>Refresh</span>
-          </button>
-        </div>
-      )}
+      {/* Refresh handled by NavTabs in page.tsx */}
     </div>
   );
 }

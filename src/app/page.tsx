@@ -223,7 +223,7 @@ export default function Home() {
   return (
     <div className="flex flex-col h-dvh overflow-hidden" style={{ height: '100dvh' }}>
       {/* Navigation Tabs - always visible on top */}
-      <NavTabs activeView={activeView} onChangeView={setActiveView} />
+      <NavTabs activeView={activeView} onChangeView={setActiveView} onRefresh={handleRefresh} />
 
       {/* Content based on active view */}
       {activeView === 'tasks' ? (
@@ -238,7 +238,6 @@ export default function Home() {
               agents={agents}
               selectedAgentId={selectedAgentId}
               onSelectAgent={selectAgent}
-              onRefresh={handleRefresh}
               loading={loadingAgents}
               unreadMap={unreadMap}
               lastSeenMap={lastSeenMap}
@@ -252,7 +251,6 @@ export default function Home() {
                 agents={agents}
                 selectedAgentId={selectedAgentId}
                 onSelectAgent={selectAgent}
-                onRefresh={handleRefresh}
                 loading={loadingAgents}
                 unreadMap={unreadMap}
                 lastSeenMap={lastSeenMap}
@@ -273,7 +271,6 @@ export default function Home() {
                   selectedAgentId={selectedAgentId}
                   onSelectAgent={selectAgent}
                   onClose={() => setSidebarOpen(false)}
-                  onRefresh={handleRefresh}
                   loading={loadingAgents}
                   unreadMap={unreadMap}
                   lastSeenMap={lastSeenMap}
@@ -301,7 +298,7 @@ export default function Home() {
   );
 }
 
-function NavTabs({ activeView, onChangeView }: { activeView: AppView; onChangeView: (view: AppView) => void }) {
+function NavTabs({ activeView, onChangeView, onRefresh }: { activeView: AppView; onChangeView: (view: AppView) => void; onRefresh?: () => void }) {
   return (
     <div className="shrink-0 flex items-center gap-1 px-4 py-2 bg-[var(--bg-secondary)] border-b border-[var(--border)] safe-top">
       <span className="text-xl mr-2">🐾</span>
@@ -325,6 +322,21 @@ function NavTabs({ activeView, onChangeView }: { activeView: AppView; onChangeVi
       >
         Tasks
       </button>
+      {/* Spacer + Refresh button */}
+      <div className="flex-1" />
+      {onRefresh && (
+        <button
+          onClick={onRefresh}
+          className="flex items-center justify-center w-8 h-8 text-[var(--text-muted)] hover:text-white hover:bg-[var(--bg-hover)] rounded-lg transition-colors active:scale-90"
+          aria-label="Refresh page"
+          title="Refresh"
+        >
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h5M20 20v-5h-5" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M20.49 9A9 9 0 105.64 5.64L4 4m16 16l-1.64-1.64A9 9 0 009 20.49" />
+          </svg>
+        </button>
+      )}
     </div>
   );
 }
