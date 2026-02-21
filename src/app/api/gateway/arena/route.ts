@@ -27,20 +27,12 @@ async function getAgentDirs(): Promise<string[]> {
   }
 }
 
-async function countMemoryFiles(agentId: string): Promise<number> {
+async function countMemoryFiles(agentId: string, workspace: string): Promise<number> {
   // Check workspace memory directory
   try {
-    const workspacePath = `/home/claude/.openclaw/workspace-${agentId}/memory`;
+    const workspacePath = path.join(workspace, 'memory');
     const files = await readdir(workspacePath);
     return files.filter(f => f.endsWith('.md')).length;
-  } catch {
-    // No workspace memory dir
-  }
-  // Check agent dir for SOUL.md as fallback
-  try {
-    const agentPath = path.join(AGENTS_PATH, agentId, 'agent');
-    const files = await readdir(agentPath);
-    return files.filter(f => f.endsWith('.md') || f.endsWith('.json')).length;
   } catch {
     return 0;
   }
@@ -110,8 +102,13 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const agentDirs = await getAgentDirs();
+    const agentDirs = (await getAgentDirs()).filter(d => !d.startsWith('_'));
     const quests = await loadQuests();
+
+    // Read openclaw config for workspace paths
+    const openclawConfig = await readJSON('/home/claude/.openclaw/openclaw.json');
+    const agentsList = openclawConfig?.agents?.list || [];
+    const defaultWorkspace = openclawConfig?.agents?.defaults?.workspace || '/home/claude/.openclaw/workspace';
 
     const agents: AgentRPGState[] = await Promise.all(
       agentDirs.map(async (agentId) => {
@@ -119,7 +116,9 @@ export async function GET(req: NextRequest) {
         const sessions = await getAgentSessions(agentId);
         const { totalTokens, updatedAt } = getActiveSession(sessions, agentId);
         const xp = getTotalXP(sessions);
-        const memoryCount = await countMemoryFiles(agentId);
+        const agentConfig = agentsList.find((a: any) => a.id === agentId);
+        const workspace = agentConfig?.workspace || defaultWorkspace;
+        const memoryCount = await countMemoryFiles(agentId, workspace);
         const status = getAgentStatus(updatedAt);
         const sessionCount = Object.keys(sessions).length;
 

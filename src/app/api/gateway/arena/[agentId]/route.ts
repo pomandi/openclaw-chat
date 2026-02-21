@@ -107,8 +107,16 @@ export async function GET(
   const agentPath = path.join(AGENTS_PATH, agentId);
 
   try {
-    // Read SOUL.md
-    const soulMd = await readTextFile(path.join(agentPath, 'agent', 'SOUL.md'));
+    // Determine workspace and agent dir from config
+    const openclawConfig = await readJSON('/home/claude/.openclaw/openclaw.json');
+    const agentsList = openclawConfig?.agents?.list || [];
+    const agentConfig = agentsList.find((a: any) => a.id === agentId);
+    const defaultWorkspace = openclawConfig?.agents?.defaults?.workspace || '/home/claude/.openclaw/workspace';
+    const agentWorkspace = agentConfig?.workspace || defaultWorkspace;
+    const agentDir = agentConfig?.agentDir || path.join(agentPath, 'agent');
+
+    // Read SOUL.md from agent dir
+    const soulMd = await readTextFile(path.join(agentDir, 'SOUL.md'));
 
     // Read sessions
     const sessions = (await readJSON(path.join(agentPath, 'sessions', 'sessions.json'))) || {};
@@ -129,16 +137,13 @@ export async function GET(
       if (u > lastUpdate) lastUpdate = u;
     }
 
-    // Memory files
-    const workspacePath = `/home/claude/.openclaw/workspace-${agentId}/memory`;
+    // Memory files (from agent's workspace)
+    const workspacePath = path.join(agentWorkspace, 'memory');
     let memoryFiles = await listDir(workspacePath);
     memoryFiles = memoryFiles.filter(f => f.endsWith('.md'));
 
-    // Agent dir files (for skills list)
-    const agentDirFiles = await listDir(path.join(agentPath, 'agent'));
-
     // Skills from AGENTS.md or agent config
-    const agentsMd = await readTextFile(path.join(agentPath, 'agent', 'AGENTS.md'));
+    const agentsMd = await readTextFile(path.join(agentDir, 'AGENTS.md'));
     const skills: string[] = [];
     if (agentsMd) {
       // Extract skill names from AGENTS.md
@@ -171,11 +176,6 @@ export async function GET(
     // Read mind (context window content)
     const mind = await readMind(agentId, sessions);
 
-    // Determine workspace
-    const openclawConfig = await readJSON('/home/claude/.openclaw/openclaw.json');
-    const agentConfig = (openclawConfig?.list || []).find((a: any) => a.id === agentId);
-    const workspace = agentConfig?.workspace || null;
-
     const rpg = getRPGClass(agentId);
     const hp = calculateHP(activeTokens, MAX_CONTEXT_TOKENS);
     const mp = calculateMP(activeTokens, MAX_CONTEXT_TOKENS);
@@ -207,7 +207,7 @@ export async function GET(
       quests,
       contextBreakdown: null,
       recentMemory: memoryFiles.slice(0, 10),
-      workspace,
+      workspace: agentWorkspace,
       mind,
     };
 
