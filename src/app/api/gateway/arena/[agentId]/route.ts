@@ -107,16 +107,14 @@ export async function GET(
   const agentPath = path.join(AGENTS_PATH, agentId);
 
   try {
-    // Determine workspace and agent dir from config
-    const openclawConfig = await readJSON('/home/claude/.openclaw/openclaw.json');
-    const agentsList = openclawConfig?.agents?.list || [];
-    const agentConfig = agentsList.find((a: any) => a.id === agentId);
-    const defaultWorkspace = openclawConfig?.agents?.defaults?.workspace || '/home/claude/.openclaw/workspace';
-    const agentWorkspace = agentConfig?.workspace || defaultWorkspace;
-    const agentDir = agentConfig?.agentDir || path.join(agentPath, 'agent');
+    // All data is synced to container-accessible paths by the sync service:
+    // _agentdir/ contains SOUL.md and AGENTS.md
+    // _memory/ contains workspace memory .md files
+    // _config/openclaw.json contains full config
+    // _cron/jobs.json contains cron data
 
-    // Read SOUL.md from agent dir
-    const soulMd = await readTextFile(path.join(agentDir, 'SOUL.md'));
+    // Read SOUL.md from synced agentdir
+    const soulMd = await readTextFile(path.join(agentPath, '_agentdir', 'SOUL.md'));
 
     // Read sessions
     const sessions = (await readJSON(path.join(agentPath, 'sessions', 'sessions.json'))) || {};
@@ -137,13 +135,12 @@ export async function GET(
       if (u > lastUpdate) lastUpdate = u;
     }
 
-    // Memory files (from agent's workspace)
-    const workspacePath = path.join(agentWorkspace, 'memory');
-    let memoryFiles = await listDir(workspacePath);
+    // Memory files (synced from workspace to _memory/)
+    let memoryFiles = await listDir(path.join(agentPath, '_memory'));
     memoryFiles = memoryFiles.filter(f => f.endsWith('.md'));
 
-    // Skills from AGENTS.md or agent config
-    const agentsMd = await readTextFile(path.join(agentDir, 'AGENTS.md'));
+    // Skills from AGENTS.md (synced to _agentdir/)
+    const agentsMd = await readTextFile(path.join(agentPath, '_agentdir', 'AGENTS.md'));
     const skills: string[] = [];
     if (agentsMd) {
       // Extract skill names from AGENTS.md
@@ -207,7 +204,7 @@ export async function GET(
       quests,
       contextBreakdown: null,
       recentMemory: memoryFiles.slice(0, 10),
-      workspace: agentWorkspace,
+      workspace: null,
       mind,
     };
 

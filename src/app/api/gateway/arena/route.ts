@@ -27,11 +27,11 @@ async function getAgentDirs(): Promise<string[]> {
   }
 }
 
-async function countMemoryFiles(agentId: string, workspace: string): Promise<number> {
-  // Check workspace memory directory
+async function countMemoryFiles(agentId: string): Promise<number> {
+  // Memory files are synced to _memory/ dir by the sync service
   try {
-    const workspacePath = path.join(workspace, 'memory');
-    const files = await readdir(workspacePath);
+    const memoryPath = path.join(AGENTS_PATH, agentId, '_memory');
+    const files = await readdir(memoryPath);
     return files.filter(f => f.endsWith('.md')).length;
   } catch {
     return 0;
@@ -105,20 +105,13 @@ export async function GET(req: NextRequest) {
     const agentDirs = (await getAgentDirs()).filter(d => !d.startsWith('_'));
     const quests = await loadQuests();
 
-    // Read openclaw config for workspace paths
-    const openclawConfig = await readJSON('/home/claude/.openclaw/openclaw.json');
-    const agentsList = openclawConfig?.agents?.list || [];
-    const defaultWorkspace = openclawConfig?.agents?.defaults?.workspace || '/home/claude/.openclaw/workspace';
-
     const agents: AgentRPGState[] = await Promise.all(
       agentDirs.map(async (agentId) => {
         const rpg = getRPGClass(agentId);
         const sessions = await getAgentSessions(agentId);
         const { totalTokens, updatedAt } = getActiveSession(sessions, agentId);
         const xp = getTotalXP(sessions);
-        const agentConfig = agentsList.find((a: any) => a.id === agentId);
-        const workspace = agentConfig?.workspace || defaultWorkspace;
-        const memoryCount = await countMemoryFiles(agentId, workspace);
+        const memoryCount = await countMemoryFiles(agentId);
         const status = getAgentStatus(updatedAt);
         const sessionCount = Object.keys(sessions).length;
 
