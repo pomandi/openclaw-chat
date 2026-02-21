@@ -175,3 +175,22 @@ textarea {
 .border-l-3 {
   border-left-width: 3px;
 }
+
+/* Arena animations */
+@keyframes arenaGlow {
+  0%, 100% { box-shadow: 0 0 8px var(--arena-glow-color, #22c55e20); }
+  50% { box-shadow: 0 0 20px var(--arena-glow-color, #22c55e40); }
+}
+
+@keyframes arenaErrorFlash {
+  0%, 100% { border-color: var(--border); }
+  50% { border-color: #ef4444; }
+}
+
+.arena-glow {
+  animation: arenaGlow 2s ease-in-out infinite;
+}
+
+.arena-error-flash {
+  animation: arenaErrorFlash 1s ease-in-out infinite;
+}

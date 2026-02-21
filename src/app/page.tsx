@@ -5,13 +5,14 @@ import LoginScreen from '@/components/LoginScreen';
 import AgentSidebar, { AgentUnreadInfo } from '@/components/AgentSidebar';
 import ChatView from '@/components/ChatView';
 import TasksView from '@/components/TasksView';
+import ArenaView from '@/components/ArenaView';
 import { Agent, AgentsListResult } from '@/lib/types';
 
 const LAST_SEEN_KEY = 'openclaw-lastSeen';
 const SELECTED_AGENT_KEY = 'openclaw-selectedAgent';
 const UNREAD_POLL_INTERVAL = 30_000; // 30 seconds
 
-type AppView = 'chat' | 'tasks';
+type AppView = 'chat' | 'tasks' | 'arena';
 
 function loadLastSeen(): Record<string, number> {
   try {
@@ -226,7 +227,11 @@ export default function Home() {
       <NavTabs activeView={activeView} onChangeView={setActiveView} onRefresh={handleRefresh} />
 
       {/* Content based on active view */}
-      {activeView === 'tasks' ? (
+      {activeView === 'arena' ? (
+        <div className="flex-1 min-h-0 overflow-hidden">
+          <ArenaView />
+        </div>
+      ) : activeView === 'tasks' ? (
         <div className="flex-1 min-h-0 overflow-hidden">
           <TasksView />
         </div>
@@ -321,6 +326,16 @@ function NavTabs({ activeView, onChangeView, onRefresh }: { activeView: AppView;
         }`}
       >
         Tasks
+      </button>
+      <button
+        onClick={() => onChangeView('arena')}
+        className={`px-4 py-1.5 text-sm font-medium rounded-lg transition-colors ${
+          activeView === 'arena'
+            ? 'bg-[var(--accent)] text-white'
+            : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]'
+        }`}
+      >
+        Arena
       </button>
       {/* Spacer + Refresh button */}
       <div className="flex-1" />
