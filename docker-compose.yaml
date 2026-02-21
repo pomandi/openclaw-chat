@@ -5,8 +5,10 @@ services:
       dockerfile: Dockerfile
     volumes:
       - /home/claude/.openclaw/agents:/data/agents:ro
+      - /home/claude/.openclaw/cron:/data/cron:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
       - NODE_ENV=production
       - AGENTS_PATH=/data/agents
+      - CRON_PATH=/data/cron/jobs.json
