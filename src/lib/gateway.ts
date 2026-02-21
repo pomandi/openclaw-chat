@@ -5,7 +5,8 @@ import fs from 'fs';
 
 const GATEWAY_HTTP_URL = process.env.OPENCLAW_GATEWAY_HTTP_URL || 'http://127.0.0.1:18789';
 const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN || '';
-const OPENCLAW_CONFIG_PATH = process.env.OPENCLAW_CONFIG_PATH || '/data/openclaw.json';
+const AGENTS_PATH = process.env.AGENTS_PATH || '/data/agents';
+const OPENCLAW_CONFIG_PATH = process.env.OPENCLAW_CONFIG_PATH || `${AGENTS_PATH}/_config/openclaw.json`;
 
 async function gatewayFetch(path: string, options: RequestInit = {}): Promise<Response> {
   const url = `${GATEWAY_HTTP_URL}${path}`;
