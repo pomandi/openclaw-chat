@@ -63,6 +63,12 @@ export interface ArenaEvent {
   color: string;
 }
 
+export interface MindMessage {
+  role: 'user' | 'assistant' | 'system' | 'toolResult';
+  content: string;
+  timestamp: number | null;
+}
+
 export interface AgentDetailData extends AgentRPGState {
   soulMd: string | null;
   skills: string[];
@@ -70,6 +76,7 @@ export interface AgentDetailData extends AgentRPGState {
   contextBreakdown: ContextBreakdown | null;
   recentMemory: string[];
   workspace: string | null;
+  mind: MindMessage[];
 }
 
 export interface ArenaData {

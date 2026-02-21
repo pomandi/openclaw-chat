@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { isAuthenticatedFromRequest } from '@/lib/auth';
 import { readFile, readdir } from 'fs/promises';
+import { createReadStream } from 'fs';
+import { createInterface } from 'readline';
 import path from 'path';
 import { getRPGClass, calculateHP, calculateMP, calculateLevel, MAX_CONTEXT_TOKENS } from '@/lib/rpg-mapping';
-import type { AgentDetailData, QuestInfo } from '@/lib/types-arena';
+import type { AgentDetailData, QuestInfo, MindMessage } from '@/lib/types-arena';
 
 const AGENTS_PATH = process.env.AGENTS_PATH || '/home/claude/.openclaw/agents';
 const CRON_PATH = process.env.CRON_PATH || '/home/claude/.openclaw/cron/jobs.json';
@@ -30,6 +32,64 @@ async function readTextFile(filePath: string): Promise<string | null> {
 async function listDir(dirPath: string): Promise<string[]> {
   try {
     return await readdir(dirPath);
+  } catch {
+    return [];
+  }
+}
+
+async function readMind(agentId: string, sessionsData: Record<string, any>): Promise<MindMessage[]> {
+  // Find the main session's JSONL file
+  const mainKey = `agent:${agentId}:main`;
+  const mainSession = sessionsData[mainKey];
+  if (!mainSession?.sessionId) return [];
+
+  const sessionFile = path.join(AGENTS_PATH, agentId, 'sessions', `${mainSession.sessionId}.jsonl`);
+
+  try {
+    const messages: MindMessage[] = [];
+    const rl = createInterface({
+      input: createReadStream(sessionFile, { encoding: 'utf-8' }),
+      crlfDelay: Infinity,
+    });
+
+    for await (const line of rl) {
+      if (!line.trim()) continue;
+      try {
+        const entry = JSON.parse(line);
+        if (entry.type === 'message') {
+          const msg = entry.message || {};
+          const role = msg.role as string;
+          if (!role) continue;
+
+          let text = '';
+          if (typeof msg.content === 'string') {
+            text = msg.content;
+          } else if (Array.isArray(msg.content)) {
+            text = msg.content
+              .filter((c: any) => c.type === 'text')
+              .map((c: any) => c.text || '')
+              .join('\n');
+          }
+
+          // For tool results, keep shorter
+          if (role === 'toolResult') {
+            text = text.slice(0, 500);
+          }
+
+          if (text || role === 'assistant') {
+            messages.push({
+              role: role as MindMessage['role'],
+              content: text.slice(0, 2000),
+              timestamp: entry.timestamp || null,
+            });
+          }
+        }
+      } catch {
+        // skip malformed lines
+      }
+    }
+
+    return messages;
   } catch {
     return [];
   }
@@ -109,6 +169,9 @@ export async function GET(
         lastDurationMs: job.state?.lastDurationMs || null,
       }));
 
+    // Read mind (context window content)
+    const mind = await readMind(agentId, sessions);
+
     // Determine workspace
     const openclawConfig = await readJSON('/home/claude/.openclaw/openclaw.json');
     const agentConfig = (openclawConfig?.list || []).find((a: any) => a.id === agentId);
@@ -146,6 +209,7 @@ export async function GET(
       contextBreakdown: null,
       recentMemory: memoryFiles.slice(0, 10),
       workspace,
+      mind,
     };
 
     return NextResponse.json(result);
