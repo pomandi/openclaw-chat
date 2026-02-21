@@ -42,10 +42,10 @@ class GatewayWSClient extends EventEmitter {
         minProtocol: 3,
         maxProtocol: 3,
         client: {
-          id: 'webchat-ui',
+          id: 'gateway-client',
           version: '1.0.0',
           platform: 'server',
-          mode: 'webchat',
+          mode: 'backend',
         },
         role: 'operator',
         scopes: ['operator.read', 'operator.write'],
