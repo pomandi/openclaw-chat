@@ -288,6 +288,7 @@ export default function Home() {
           <div className={`flex-1 min-w-0 flex flex-col ${!selectedAgentId ? 'hidden md:flex' : 'flex'}`}>
             {selectedAgent ? (
               <ChatView
+                key={selectedAgent.id}
                 agent={selectedAgent}
                 sessionKey={getSessionKey(selectedAgent.id)}
                 onOpenSidebar={() => setSidebarOpen(true)}
