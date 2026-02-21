@@ -8,7 +8,7 @@ import { getRPGClass, calculateHP, calculateMP, calculateLevel, MAX_CONTEXT_TOKE
 import type { AgentDetailData, QuestInfo, MindMessage } from '@/lib/types-arena';
 
 const AGENTS_PATH = process.env.AGENTS_PATH || '/home/claude/.openclaw/agents';
-const CRON_PATH = process.env.CRON_PATH || '/home/claude/.openclaw/cron/jobs.json';
+const CRON_PATH = process.env.CRON_PATH || `${AGENTS_PATH}/_cron/jobs.json`;
 
 export const dynamic = 'force-dynamic';
 
