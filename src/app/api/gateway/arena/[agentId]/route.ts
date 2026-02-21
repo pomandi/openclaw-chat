@@ -113,19 +113,18 @@ export async function GET(
     // Read sessions
     const sessions = (await readJSON(path.join(agentPath, 'sessions', 'sessions.json'))) || {};
 
-    // Calculate tokens
-    let activeTokens = 0;
+    // Calculate tokens — use main session for active tokens
+    const mainKey = `agent:${agentId}:main`;
+    const mainSession = sessions[mainKey] as any;
+    let activeTokens = mainSession?.totalTokens || 0;
     let lastUpdate = 0;
     let totalXP = 0;
     const sessionCount = Object.keys(sessions).length;
 
-    for (const [key, session] of Object.entries(sessions)) {
+    for (const [, session] of Object.entries(sessions)) {
       const s = session as any;
       const t = s.totalTokens || 0;
       totalXP += t;
-      if (key === `agent:${agentId}:main` || t > activeTokens) {
-        activeTokens = Math.max(activeTokens, t);
-      }
       const u = s.updatedAt || 0;
       if (u > lastUpdate) lastUpdate = u;
     }

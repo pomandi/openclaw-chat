@@ -127,5 +127,5 @@ export function formatArenaEvent(agentId: string, eventType: string, detail?: st
   }
 }
 
-// Max tokens for context window (200K default)
-export const MAX_CONTEXT_TOKENS = 200_000;
+// Max tokens for context window (gpt-5.3-codex = 272K)
+export const MAX_CONTEXT_TOKENS = 272_000;

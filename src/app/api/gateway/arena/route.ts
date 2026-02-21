@@ -52,24 +52,19 @@ async function getAgentSessions(agentId: string): Promise<Record<string, any>> {
 }
 
 function getActiveSession(sessions: Record<string, any>, agentId: string): { totalTokens: number; updatedAt: number } {
-  // Find the main session for the agent
+  // Use the main session's tokens (actual active context window)
   const mainKey = `agent:${agentId}:main`;
   const mainSession = sessions[mainKey];
-
-  // Also sum up all session tokens for XP
-  let maxTokens = 0;
   let lastUpdate = 0;
 
   for (const [, session] of Object.entries(sessions)) {
     const s = session as any;
-    const t = s.totalTokens || 0;
-    if (t > maxTokens) maxTokens = t;
     const u = s.updatedAt || 0;
     if (u > lastUpdate) lastUpdate = u;
   }
 
   return {
-    totalTokens: mainSession?.totalTokens || maxTokens,
+    totalTokens: mainSession?.totalTokens || 0,
     updatedAt: lastUpdate,
   };
 }
