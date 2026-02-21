@@ -37,7 +37,7 @@ async function listDir(dirPath: string): Promise<string[]> {
   }
 }
 
-async function readMind(agentId: string, sessionsData: Record<string, any>): Promise<MindMessage[]> {
+async function readMind(agentId: string, sessionsData: Record<string, any>, full: boolean = false): Promise<MindMessage[]> {
   // Find the main session's JSONL file
   const mainKey = `agent:${agentId}:main`;
   const mainSession = sessionsData[mainKey];
@@ -71,15 +71,18 @@ async function readMind(agentId: string, sessionsData: Record<string, any>): Pro
               .join('\n');
           }
 
-          // For tool results, keep shorter
-          if (role === 'toolResult') {
-            text = text.slice(0, 500);
+          if (!full) {
+            // Truncated mode: keep tool results short, cap all messages
+            if (role === 'toolResult') {
+              text = text.slice(0, 500);
+            }
+            text = text.slice(0, 2000);
           }
 
           if (text || role === 'assistant') {
             messages.push({
               role: role as MindMessage['role'],
-              content: text.slice(0, 2000),
+              content: text,
               timestamp: entry.timestamp || null,
             });
           }
@@ -105,6 +108,7 @@ export async function GET(
 
   const { agentId } = await params;
   const agentPath = path.join(AGENTS_PATH, agentId);
+  const fullMind = req.nextUrl.searchParams.get('mind') === 'full';
 
   try {
     // All data is synced to container-accessible paths by the sync service:
@@ -171,7 +175,7 @@ export async function GET(
       }));
 
     // Read mind (context window content)
-    const mind = await readMind(agentId, sessions);
+    const mind = await readMind(agentId, sessions, fullMind);
 
     const rpg = getRPGClass(agentId);
     const hp = calculateHP(activeTokens, MAX_CONTEXT_TOKENS);

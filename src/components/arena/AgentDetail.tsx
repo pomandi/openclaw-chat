@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import type { AgentDetailData, MindMessage } from '@/lib/types-arena';
 import { getStatusLabel, getStatusColor, getHPColor, getMPColor } from '@/lib/rpg-mapping';
 
@@ -9,11 +9,10 @@ interface AgentDetailProps {
   onClose: () => void;
 }
 
-function MindBubble({ msg }: { msg: MindMessage }) {
+function MindBubble({ msg, expanded }: { msg: MindMessage; expanded?: boolean }) {
   const isUser = msg.role === 'user';
   const isAssistant = msg.role === 'assistant';
   const isTool = msg.role === 'toolResult';
-  const isSystem = msg.role === 'system';
 
   const roleLabel = isUser ? 'User' : isAssistant ? 'Agent' : isTool ? 'Tool Result' : 'System';
   const roleColor = isUser ? 'text-blue-400' : isAssistant ? 'text-green-400' : isTool ? 'text-purple-400' : 'text-yellow-400';
@@ -21,6 +20,18 @@ function MindBubble({ msg }: { msg: MindMessage }) {
   const roleIcon = isUser ? '👤' : isAssistant ? '🤖' : isTool ? '🔧' : '⚙️';
 
   if (!msg.content && isAssistant) return null;
+
+  // Clean metadata wrappers from content
+  let content = msg.content || '';
+  if (isUser) {
+    // Strip "Conversation info (untrusted metadata):" block
+    content = content.replace(/Conversation info \(untrusted metadata\):[\s\S]*?```\s*/g, '').trim();
+  }
+  if (isAssistant) {
+    content = content.replace(/^\[\[reply_to_current\]\]\s*/g, '');
+  }
+
+  if (!content && isAssistant) return null;
 
   return (
     <div className={`rounded-lg border p-3 ${bgColor}`}>
@@ -33,9 +44,83 @@ function MindBubble({ msg }: { msg: MindMessage }) {
           </span>
         )}
       </div>
-      <pre className="text-xs text-[var(--text-secondary)] whitespace-pre-wrap break-words font-mono leading-relaxed max-h-40 overflow-y-auto">
-        {msg.content || '(empty response — tool calls follow)'}
+      <pre className={`text-xs text-[var(--text-secondary)] whitespace-pre-wrap break-words font-mono leading-relaxed ${expanded ? '' : 'max-h-40'} overflow-y-auto`}>
+        {content || '(empty response — tool calls follow)'}
       </pre>
+    </div>
+  );
+}
+
+function FullMindViewer({ agentId, agentName, agentIcon, onClose }: { agentId: string; agentName: string; agentIcon: string; onClose: () => void }) {
+  const [messages, setMessages] = useState<MindMessage[]>([]);
+  const [loading, setLoading] = useState(true);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    fetch(`/api/gateway/arena/${agentId}?mind=full`)
+      .then(res => res.ok ? res.json() : null)
+      .then(d => {
+        if (d?.mind) setMessages(d.mind);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, [agentId]);
+
+  // Scroll to bottom on load
+  useEffect(() => {
+    if (!loading && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [loading]);
+
+  const userCount = messages.filter(m => m.role === 'user').length;
+  const agentCount = messages.filter(m => m.role === 'assistant').length;
+  const toolCount = messages.filter(m => m.role === 'toolResult').length;
+
+  return (
+    <div className="fixed inset-0 z-[60] flex flex-col bg-[var(--bg-primary)]">
+      {/* Header */}
+      <div className="shrink-0 flex items-center gap-3 px-4 py-3 bg-[var(--bg-secondary)] border-b border-[var(--border)]">
+        <button onClick={onClose} className="p-1.5 hover:bg-[var(--bg-hover)] rounded-lg">
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
+        <span className="text-lg">{agentIcon}</span>
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-semibold text-white truncate">{agentName} — Full Context</div>
+          <div className="flex gap-3 text-[10px] text-[var(--text-muted)]">
+            <span>👤 {userCount}</span>
+            <span>🤖 {agentCount}</span>
+            <span>🔧 {toolCount}</span>
+            <span>Total: {messages.length}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Messages */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto p-4">
+        {loading ? (
+          <div className="flex items-center justify-center py-20">
+            <div className="flex gap-1.5">
+              <div className="w-2.5 h-2.5 bg-[var(--accent)] rounded-full typing-dot" />
+              <div className="w-2.5 h-2.5 bg-[var(--accent)] rounded-full typing-dot" />
+              <div className="w-2.5 h-2.5 bg-[var(--accent)] rounded-full typing-dot" />
+            </div>
+          </div>
+        ) : messages.length > 0 ? (
+          <div className="space-y-3 max-w-4xl mx-auto">
+            {messages.map((msg, i) => (
+              <MindBubble key={i} msg={msg} expanded />
+            ))}
+          </div>
+        ) : (
+          <div className="text-center text-[var(--text-muted)] py-20">
+            <span className="text-2xl block mb-2">🧠</span>
+            <span className="text-sm">No messages in context window</span>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -44,6 +129,7 @@ export default function AgentDetail({ agentId, onClose }: AgentDetailProps) {
   const [data, setData] = useState<AgentDetailData | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'mind' | 'soul' | 'skills' | 'quests'>('mind');
+  const [showFullMind, setShowFullMind] = useState(false);
   const mindRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -169,12 +255,23 @@ export default function AgentDetail({ agentId, onClose }: AgentDetailProps) {
             <div>
               {mindMessages.length > 0 ? (
                 <>
-                  {/* Mind stats */}
-                  <div className="flex gap-3 mb-3 text-[10px] text-[var(--text-muted)]">
-                    <span>👤 User: <span className="text-blue-400 font-medium">{userMessages}</span></span>
-                    <span>🤖 Agent: <span className="text-green-400 font-medium">{assistantMessages}</span></span>
-                    <span>🔧 Tools: <span className="text-purple-400 font-medium">{toolMessages}</span></span>
-                    <span>Total: <span className="text-white font-medium">{mindMessages.length}</span> messages in context</span>
+                  {/* Mind stats + View Full button */}
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="flex gap-3 text-[10px] text-[var(--text-muted)] flex-1">
+                      <span>👤 User: <span className="text-blue-400 font-medium">{userMessages}</span></span>
+                      <span>🤖 Agent: <span className="text-green-400 font-medium">{assistantMessages}</span></span>
+                      <span>🔧 Tools: <span className="text-purple-400 font-medium">{toolMessages}</span></span>
+                      <span>Total: <span className="text-white font-medium">{mindMessages.length}</span></span>
+                    </div>
+                    <button
+                      onClick={() => setShowFullMind(true)}
+                      className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium bg-[var(--accent)]/20 text-[var(--accent)] hover:bg-[var(--accent)]/30 rounded-lg transition-colors"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5" />
+                      </svg>
+                      View Full
+                    </button>
                   </div>
                   <div className="space-y-2">
                     {mindMessages.map((msg, i) => (
@@ -276,6 +373,16 @@ export default function AgentDetail({ agentId, onClose }: AgentDetailProps) {
           )}
         </div>
       </div>
+
+      {/* Full Mind Viewer */}
+      {showFullMind && (
+        <FullMindViewer
+          agentId={agentId}
+          agentName={`${data.icon} ${data.id}`}
+          agentIcon={data.icon}
+          onClose={() => setShowFullMind(false)}
+        />
+      )}
     </div>
   );
 }
