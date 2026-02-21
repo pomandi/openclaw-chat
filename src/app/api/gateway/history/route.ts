@@ -41,15 +41,30 @@ function parseTranscriptFile(filePath: string, limit: number) {
       const role = msg.role;
       if (role !== 'user' && role !== 'assistant') continue;
       
-      const text = extractTextContent(msg.content);
+      let text = extractTextContent(msg.content);
       if (!text.trim()) continue;
-      
+
       // Skip internal messages
       if (text === 'NO_REPLY' || text === 'HEARTBEAT_OK') continue;
       if (text.startsWith('Read HEARTBEAT.md')) continue;
       if (text.startsWith('[cron:') || text.startsWith('[heartbeat')) continue;
       if (text.startsWith('Pre-compaction memory flush')) continue;
-      
+      if (text.startsWith('System:') && text.includes('Post-Compaction Audit')) continue;
+
+      // Strip "Conversation info" metadata wrapper from user messages
+      if (role === 'user' && text.startsWith('Conversation info (untrusted metadata):')) {
+        const jsonEnd = text.indexOf('\n```\n');
+        if (jsonEnd !== -1) {
+          text = text.slice(jsonEnd + 5).trim();
+        }
+        if (!text.trim()) continue;
+      }
+
+      // Strip [[reply_to_current]] prefix from assistant messages
+      if (role === 'assistant') {
+        text = text.replace(/^\[\[reply_to_current\]\]\s*/i, '');
+      }
+
       const ts = parsed.timestamp
         ? (typeof parsed.timestamp === 'string' ? new Date(parsed.timestamp).getTime() : parsed.timestamp)
         : msg.timestamp || Date.now();
@@ -208,18 +223,48 @@ export async function GET(req: NextRequest) {
     try {
       const result = await gw.chatHistory(sessionKey, limit);
       if (result && result.messages) {
-        wsMessages = result.messages.map((m: any) => ({
-          id: m.id || `ws_${Date.now()}_${Math.random()}`,
-          role: m.role,
-          content: typeof m.content === 'string' ? m.content : 
-                  Array.isArray(m.content) ? m.content.filter((p: any) => p.type === 'text').map((p: any) => p.text).join('') : 
-                  String(m.content || ''),
-          timestamp: m.timestamp ? (typeof m.timestamp === 'string' ? new Date(m.timestamp).getTime() : m.timestamp) : Date.now(),
-          status: 'sent' as const,
-        }));
+        wsMessages = result.messages
+          .map((m: any) => {
+            let text = typeof m.content === 'string' ? m.content :
+                    Array.isArray(m.content) ? m.content.filter((p: any) => p.type === 'text').map((p: any) => p.text).join('') :
+                    String(m.content || '');
+
+            // Strip "Conversation info" metadata wrapper from user messages
+            if (m.role === 'user' && text.startsWith('Conversation info (untrusted metadata):')) {
+              const jsonEnd = text.indexOf('\n```\n');
+              if (jsonEnd !== -1) {
+                text = text.slice(jsonEnd + 5).trim();
+              }
+            }
+
+            // Strip [[reply_to_current]] prefix from assistant messages
+            if (m.role === 'assistant') {
+              text = text.replace(/^\[\[reply_to_current\]\]\s*/i, '');
+            }
+
+            return {
+              id: m.id || `ws_${Date.now()}_${Math.random()}`,
+              role: m.role,
+              content: text,
+              timestamp: m.timestamp ? (typeof m.timestamp === 'string' ? new Date(m.timestamp).getTime() : m.timestamp) : Date.now(),
+              status: 'sent' as const,
+            };
+          })
+          .filter((m: any) => {
+            const t = m.content.trim();
+            if (!t) return false;
+            // Skip internal messages
+            if (t === 'NO_REPLY' || t === 'HEARTBEAT_OK') return false;
+            if (t.startsWith('Read HEARTBEAT.md')) return false;
+            if (t.startsWith('[cron:') || t.startsWith('[heartbeat')) return false;
+            if (t.startsWith('Pre-compaction memory flush')) return false;
+            if (t.startsWith('System:') && t.includes('Post-Compaction Audit')) return false;
+            return true;
+          });
+        console.log(`[History] WS returned ${result.messages.length} raw → ${wsMessages.length} filtered for ${sessionKey}`);
       }
-    } catch (wsErr) {
-      console.warn('[API] WebSocket history failed, falling back to file-based:', wsErr);
+    } catch (wsErr: any) {
+      console.warn(`[History] WS failed for ${sessionKey}: ${wsErr.message}, falling back to file-based`);
     }
 
     // If WebSocket provided messages, use them
@@ -237,8 +282,8 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Fallback to file-based history (original implementation)
-    // Get main session messages (Telegram / webchat)
+    // Fallback to file-based history
+    console.log(`[History] File-based fallback for ${agentId}, sessionKey=${sessionKey}`);
     const mainKey = `agent:${agentId}:main`;
     const mainFile = findSessionFile(agentId, mainKey);
     const mainMessages = mainFile ? parseTranscriptFile(mainFile, limit) : [];
