@@ -1,8 +1,11 @@
 // OpenClaw Gateway HTTP Client (server-side)
 // Uses the HTTP API endpoints
 
+import fs from 'fs';
+
 const GATEWAY_HTTP_URL = process.env.OPENCLAW_GATEWAY_HTTP_URL || 'http://127.0.0.1:18789';
 const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN || '';
+const OPENCLAW_CONFIG_PATH = process.env.OPENCLAW_CONFIG_PATH || '/data/openclaw.json';
 
 async function gatewayFetch(path: string, options: RequestInit = {}): Promise<Response> {
   const url = `${GATEWAY_HTTP_URL}${path}`;
@@ -17,32 +20,39 @@ async function gatewayFetch(path: string, options: RequestInit = {}): Promise<Re
   return res;
 }
 
-// Agent info from config
-const AGENTS_CONFIG = [
-  { id: 'main', name: 'CEO Agent' },
-  { id: 'coding-agent', name: 'Poma Coding Agent' },
-  { id: 'ops-monitor', name: 'Ops Monitor' },
-  { id: 'pomamarketing', name: 'Poma Marketing' },
-  { id: 'fatura-collector', name: 'Fatura Collector' },
-  { id: 'mtm-tedarik', name: 'MTM Tedarik Yonetimi' },
-  { id: 'customer-relations', name: 'Poma CRM' },
-  { id: 'hr', name: 'Poma HR' },
-  { id: 'vision', name: 'Poma Vision' },
-  { id: 'security', name: 'Poma Security' },
-  { id: 'qa-tester', name: 'Poma QA Tester' },
-  { id: 'product-upload', name: 'Product Upload' },
-  { id: 'seo-agent', name: 'Poma SEO Agent' },
-  { id: 'personal-assistant', name: 'Personal Assistant' },
-  { id: 'ads-merchant', name: 'Ads & Merchant Center' },
-  { id: 'investor', name: 'Investment Tracker' },
-];
+// Cache for agent list (30 second TTL)
+let agentsCache: { agents: { id: string; name: string }[]; ts: number } | null = null;
+const CACHE_TTL = 30_000;
+
+function readAgentsFromConfig(): { id: string; name: string }[] {
+  const raw = fs.readFileSync(OPENCLAW_CONFIG_PATH, 'utf-8');
+  const config = JSON.parse(raw);
+  const list: { id: string; name?: string }[] = config?.agents?.list || [];
+  return list.map((a) => ({
+    id: a.id,
+    name: a.name || a.id,
+  }));
+}
 
 export async function listAgents() {
+  const now = Date.now();
+  if (!agentsCache || now - agentsCache.ts > CACHE_TTL) {
+    try {
+      const agents = readAgentsFromConfig();
+      agentsCache = { agents, ts: now };
+    } catch (err) {
+      console.error('[gateway] Failed to read agents from config:', err);
+      // Return cached if available, otherwise empty
+      if (!agentsCache) {
+        agentsCache = { agents: [{ id: 'main', name: 'CEO Agent' }], ts: now };
+      }
+    }
+  }
   return {
     defaultId: 'main',
     mainKey: 'agent:main:main',
     scope: 'global',
-    agents: AGENTS_CONFIG,
+    agents: agentsCache.agents,
   };
 }
 

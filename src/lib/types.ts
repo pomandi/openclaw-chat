@@ -67,6 +67,8 @@ export const AGENT_EMOJIS: Record<string, string> = {
   'personal-assistant': '📅',
   'ads-merchant': '📢',
   investor: '💰',
+  'web-analytics': '📊',
+  gatekeeper: '🚪',
 };
 
 export function getAgentEmoji(agentId: string, agent?: Agent): string {
