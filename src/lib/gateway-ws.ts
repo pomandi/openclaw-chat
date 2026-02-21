@@ -47,7 +47,7 @@ class GatewayWSClient extends EventEmitter {
           platform: 'server',
           mode: 'webchat',
         },
-        role: 'user',
+        role: 'operator',
         scopes: [],
         caps: [],
         auth: { token: GATEWAY_TOKEN },
