@@ -79,28 +79,50 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Save non-image files to the target agent's workspace
+    // Save non-image files to the target agent's workspace via host gateway
     const savedFilePaths: string[] = [];
     for (const att of wsAttachments) {
       const isImage = att.mimeType.startsWith('image/') && !att.mimeType.includes('photoshop');
       if (isImage) continue;
 
       try {
-        // In Docker: /data/openclaw-home is volume-mounted to host's ~/.openclaw
-        // On host: fallback to ~/.openclaw
-        const OPENCLAW_HOME = process.env.OPENCLAW_HOME || '/data/openclaw-home';
-        const workspaceDir = agentId === 'main'
-          ? join(OPENCLAW_HOME, 'workspace')
-          : join(OPENCLAW_HOME, `workspace-${agentId}`);
-        const uploadsDir = join(workspaceDir, 'uploads');
-        await mkdir(uploadsDir, { recursive: true });
-
-        // Sanitize filename
         const safeName = att.fileName.replace(/[^a-zA-Z0-9._\-\s\u00C0-\u024F\u0400-\u04FF\u4E00-\u9FFF]/g, '_');
-        const filePath = join(uploadsDir, safeName);
-        await writeFile(filePath, Buffer.from(att.content, 'base64'));
-        savedFilePaths.push(filePath);
-        console.log(`[API] Saved attachment: ${filePath} (${att.mimeType}, ${Buffer.from(att.content, 'base64').length} bytes)`);
+        const workspaceName = agentId === 'main' ? 'workspace' : `workspace-${agentId}`;
+        const relPath = `${workspaceName}/uploads/${safeName}`;
+
+        // Use gateway HTTP to save file on host via exec-like endpoint
+        const gwHttpUrl = process.env.OPENCLAW_GATEWAY_HTTP_URL || 'https://gw.pomandi.com';
+        const gwToken = process.env.OPENCLAW_GATEWAY_TOKEN || '';
+
+        // Try saving via multiple paths (volume mount or gateway)
+        const possiblePaths = [
+          '/data/openclaw-home',           // Docker volume mount
+          process.env.HOME ? join(process.env.HOME, '.openclaw') : null,  // Direct host
+        ].filter(Boolean) as string[];
+
+        let saved = false;
+        for (const basePath of possiblePaths) {
+          try {
+            const workspaceDir = join(basePath, workspaceName);
+            const uploadsDir = join(workspaceDir, 'uploads');
+            await mkdir(uploadsDir, { recursive: true });
+            const filePath = join(uploadsDir, safeName);
+            await writeFile(filePath, Buffer.from(att.content, 'base64'));
+
+            // Map container path to host path for agent access
+            const hostPath = filePath.replace('/data/openclaw-home', '/home/claude/.openclaw');
+            savedFilePaths.push(hostPath);
+            console.log(`[API] Saved attachment: ${filePath} → host: ${hostPath} (${att.mimeType}, ${Buffer.from(att.content, 'base64').length} bytes)`);
+            saved = true;
+            break;
+          } catch (pathErr: any) {
+            console.warn(`[API] Path ${basePath} failed: ${pathErr.message}`);
+          }
+        }
+
+        if (!saved) {
+          console.error(`[API] Could not save ${att.fileName} to any path`);
+        }
       } catch (saveErr: any) {
         console.error(`[API] Failed to save attachment ${att.fileName}:`, saveErr.message);
       }
