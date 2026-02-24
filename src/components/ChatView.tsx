@@ -1,7 +1,19 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback, FormEvent } from 'react';
-import { Agent, ChatMessage, Attachment, getAgentEmoji, getAgentName, MAX_FILE_SIZE, SUPPORTED_IMAGE_TYPES, SUPPORTED_FILE_TYPES } from '@/lib/types';
+import {
+  Agent,
+  ChatMessage,
+  Attachment,
+  getAgentEmoji,
+  getAgentName,
+  MAX_FILE_SIZE,
+  SUPPORTED_IMAGE_TYPES,
+  SUPPORTED_FILE_TYPES,
+  SUPPORTED_PDF_TYPES,
+  SUPPORTED_PSD_TYPES,
+  inferMimeTypeFromFilename,
+} from '@/lib/types';
 import MarkdownRenderer from './MarkdownRenderer';
 import VoiceRecorder, { AudioBubblePlayer } from './VoiceRecorder';
 
@@ -287,33 +299,41 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
   // File handling
   function handleFileSelect(files: FileList | null) {
     if (!files) return;
-    
+
     Array.from(files).forEach(file => {
       if (file.size > MAX_FILE_SIZE) {
         alert(`File "${file.name}" is too large. Maximum size is 10MB.`);
         return;
       }
-      
-      if (!SUPPORTED_FILE_TYPES.includes(file.type)) {
-        alert(`File type "${file.type}" is not supported.`);
+
+      const rawMime = (file.type || '').toLowerCase();
+      const inferredMime = inferMimeTypeFromFilename(file.name);
+      const effectiveMime = rawMime || inferredMime || '';
+
+      const isImage = SUPPORTED_IMAGE_TYPES.includes(effectiveMime);
+      const isPdf = SUPPORTED_PDF_TYPES.includes(effectiveMime) || file.name.toLowerCase().endsWith('.pdf');
+      const isPsd = SUPPORTED_PSD_TYPES.includes(effectiveMime) || file.name.toLowerCase().endsWith('.psd');
+
+      if (!isImage && !isPdf && !isPsd) {
+        const label = effectiveMime || 'unknown';
+        alert(`File type "${label}" is not supported.`);
         return;
       }
 
       const reader = new FileReader();
       reader.onload = (e) => {
         const dataUrl = e.target?.result as string;
-        const isImage = SUPPORTED_IMAGE_TYPES.includes(file.type);
-        
+
         const attachment: Attachment = {
           id: `att_${Date.now()}_${Math.random().toString(36).slice(2)}`,
           type: isImage ? 'image' : 'file',
           name: file.name,
           size: file.size,
-          mimeType: file.type,
+          mimeType: effectiveMime || 'application/octet-stream',
           dataUrl,
           previewUrl: isImage ? dataUrl : undefined,
         };
-        
+
         setAttachments(prev => [...prev, attachment]);
       };
       reader.readAsDataURL(file);

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { isAuthenticatedFromRequest } from '@/lib/auth';
 import { getGatewayWS } from '@/lib/gateway-ws';
+import { inferMimeTypeFromFilename } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // Reduced since this is now just an API call, not streaming
@@ -14,48 +15,65 @@ export async function POST(req: NextRequest) {
   try {
     const { agentId, message, attachments, sessionKey } = await req.json();
 
-    if (!agentId || !message) {
-      return NextResponse.json({ error: 'agentId and message required' }, { status: 400 });
+    const hasMessage = typeof message === 'string' && message.trim().length > 0;
+    const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
+
+    if (!agentId || (!hasMessage && !hasAttachments)) {
+      return NextResponse.json({ error: 'agentId and message/attachment required' }, { status: 400 });
     }
 
     const gw = getGatewayWS();
     const sk = sessionKey || `agent:${agentId}:main`;
 
-    // Build attachments for WebSocket format
-    const wsAttachments = [];
+    // Build attachments for Gateway RPC format
+    const wsAttachments: Array<{
+      type: string;
+      mimeType: string;
+      fileName: string;
+      content: string;
+    }> = [];
+
+    const attachmentNotes: string[] = [];
+
     if (attachments && attachments.length > 0) {
       for (const att of attachments) {
-        if (att.type === 'image' && att.dataUrl) {
-          wsAttachments.push({
-            type: 'image_url',
-            image_url: { url: att.dataUrl, detail: 'auto' },
-          });
-        } else if (att.type === 'audio' && att.dataUrl) {
-          // Send audio as input_audio in OpenAI multimodal format
-          const base64Match = att.dataUrl.match(/^data:[^;]+;base64,(.+)$/);
-          if (base64Match) {
-            wsAttachments.push({
-              type: 'input_audio',
-              input_audio: {
-                data: base64Match[1],
-                format: att.mimeType?.includes('wav') ? 'wav' : 
-                        att.mimeType?.includes('mp3') || att.mimeType?.includes('mpeg') ? 'mp3' : 
-                        att.mimeType?.includes('mp4') ? 'mp4' : 'wav',
-              },
-            });
+        if (!att?.dataUrl) continue;
+
+        const base64Match = String(att.dataUrl).match(/^data:([^;]+);base64,(.+)$/);
+        const base64Content = base64Match?.[2];
+        if (!base64Content) continue;
+
+        const inferredMime = inferMimeTypeFromFilename(att.name);
+        const mimeType = (att.mimeType || base64Match?.[1] || inferredMime || 'application/octet-stream').toLowerCase();
+        const fileName = att.name || `attachment-${Date.now()}`;
+
+        wsAttachments.push({
+          type: att.type || 'file',
+          mimeType,
+          fileName,
+          content: base64Content,
+        });
+
+        // Fallback note so assistant still sees non-image docs if backend profile drops them.
+        if (att.type === 'file') {
+          if (mimeType === 'application/pdf' || fileName.toLowerCase().endsWith('.pdf')) {
+            attachmentNotes.push(`[PDF attached: ${fileName}]`);
+          } else if (fileName.toLowerCase().endsWith('.psd') || mimeType.includes('photoshop')) {
+            attachmentNotes.push(`[PSD attached: ${fileName}]`);
           } else {
-            // Fallback: describe as text in message
-            const durationStr = att.duration ? ` ${Math.round(att.duration)}s` : '';
-            // We'll append this to the message text
+            attachmentNotes.push(`[File attached: ${fileName}]`);
           }
-        } else if (att.type === 'file') {
-          // For non-image files, we'll describe them in the message text
         }
       }
     }
 
+    const baseMessage = typeof message === 'string' ? message : '';
+    const outboundMessage = attachmentNotes.length > 0
+      ? `${baseMessage}\n${attachmentNotes.join('\n')}`.trim()
+      : baseMessage;
+
     try {
-      const result = await gw.chatSend(sk, message, wsAttachments);
+      const result = await gw.chatSend(sk, outboundMessage, wsAttachments);
       return NextResponse.json({ ok: true, ...result });
     } catch (err: any) {
       console.error('[API] WebSocket chat error:', err.message);

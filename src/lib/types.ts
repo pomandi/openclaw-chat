@@ -85,4 +85,42 @@ export const MAX_FILE_SIZE = 10 * 1024 * 1024;
 // Supported file types
 export const SUPPORTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 export const SUPPORTED_AUDIO_TYPES = ['audio/webm', 'audio/ogg', 'audio/mp4', 'audio/mpeg', 'audio/wav'];
-export const SUPPORTED_FILE_TYPES = [...SUPPORTED_IMAGE_TYPES, 'application/pdf'];
+export const SUPPORTED_PDF_TYPES = ['application/pdf'];
+export const SUPPORTED_PSD_TYPES = [
+  'image/vnd.adobe.photoshop',
+  'image/x-photoshop',
+  'application/photoshop',
+  'application/x-photoshop',
+];
+
+// Used by <input accept="..."> (include extensions for iOS/Safari file pickers)
+export const SUPPORTED_FILE_TYPES = [
+  'image/*',
+  ...SUPPORTED_IMAGE_TYPES,
+  ...SUPPORTED_PDF_TYPES,
+  ...SUPPORTED_PSD_TYPES,
+  '.pdf',
+  '.psd',
+];
+
+export function inferMimeTypeFromFilename(fileName?: string): string | undefined {
+  if (!fileName) return undefined;
+  const ext = fileName.toLowerCase().split('.').pop();
+  switch (ext) {
+    case 'jpg':
+    case 'jpeg':
+      return 'image/jpeg';
+    case 'png':
+      return 'image/png';
+    case 'gif':
+      return 'image/gif';
+    case 'webp':
+      return 'image/webp';
+    case 'pdf':
+      return 'application/pdf';
+    case 'psd':
+      return 'image/vnd.adobe.photoshop';
+    default:
+      return undefined;
+  }
+}
