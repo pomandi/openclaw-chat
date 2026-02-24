@@ -80,7 +80,7 @@ export async function POST(req: NextRequest) {
 
     // Save non-image files to host via file-receiver service (bypasses Docker volume issues)
     const savedFilePaths: string[] = [];
-    const FILE_RECEIVER_URL = process.env.FILE_RECEIVER_URL || 'http://host.docker.internal:18900';
+    const FILE_RECEIVER_URL = process.env.FILE_RECEIVER_URL || 'http://10.0.1.1:18900';
     const FILE_RECEIVER_TOKEN = process.env.FILE_RECEIVER_TOKEN || 'fr-pomandi-2026';
 
     for (const att of wsAttachments) {
