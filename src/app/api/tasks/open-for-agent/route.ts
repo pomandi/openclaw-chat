@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
        FROM agent_tasks
        WHERE metadata->>'type' = 'forward'
          AND assigned_agent = $1
-         AND status IN ('pending', 'running')
+         AND status IN ('pending', 'running', 'blocked')
        ORDER BY created_at DESC`,
       [agentId]
     );

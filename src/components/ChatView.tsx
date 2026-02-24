@@ -775,6 +775,12 @@ export default function ChatView({ agent, agents, sessionKey, onOpenSidebar, onB
         ...lines,
         '',
         `Instruction: ${instruction}`,
+        '',
+        `Bu gorev Task #${task.id} olarak takip ediliyor.`,
+        `Is bittiginde durumu task tool ile guncelle:`,
+        `- Basarili: task(action="update", taskId=${task.id}, status="done", summary="ozet")`,
+        `- Basarisiz: task(action="update", taskId=${task.id}, status="failed", summary="neden")`,
+        `- Engel var: task(action="update", taskId=${task.id}, status="blocked", summary="ne lazim")`,
       ].join('\n');
 
       const chatRes = await fetch('/api/gateway/chat', {

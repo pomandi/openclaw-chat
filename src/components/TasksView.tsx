@@ -26,7 +26,7 @@ interface AgentTask {
   id: number;
   title: string;
   description: string | null;
-  status: 'pending' | 'running' | 'done' | 'failed';
+  status: 'pending' | 'running' | 'done' | 'failed' | 'blocked';
   priority: 'low' | 'normal' | 'high' | 'urgent';
   created_by: string;
   assigned_agent: string;
@@ -45,6 +45,7 @@ interface TaskStats {
   running: number;
   done: number;
   failed: number;
+  blocked?: number;
 }
 
 interface TasksResponse {
@@ -62,7 +63,7 @@ const AUTO_REFRESH_INTERVAL = 30_000; // 30 seconds
 
 export default function TasksView() {
   const [tasks, setTasks] = useState<AgentTask[]>([]);
-  const [stats, setStats] = useState<TaskStats>({ total: 0, pending: 0, running: 0, done: 0, failed: 0 });
+  const [stats, setStats] = useState<TaskStats>({ total: 0, pending: 0, running: 0, done: 0, failed: 0, blocked: 0 });
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [agentFilter, setAgentFilter] = useState<string>('');
@@ -71,6 +72,7 @@ export default function TasksView() {
   const [showNewTaskModal, setShowNewTaskModal] = useState(false);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   const fetchTasks = useCallback(async () => {
     try {
@@ -103,6 +105,13 @@ export default function TasksView() {
     const interval = setInterval(fetchTasks, AUTO_REFRESH_INTERVAL);
     return () => clearInterval(interval);
   }, [fetchTasks]);
+
+  // Toast auto-dismiss
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(timer);
+  }, [toast]);
 
   // Filter by search (client-side)
   const filteredTasks = search
@@ -148,6 +157,8 @@ export default function TasksView() {
         return <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-green-500/20 text-green-400">Done</span>;
       case 'failed':
         return <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-red-500/20 text-red-400">Failed</span>;
+      case 'blocked':
+        return <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-orange-500/10 text-orange-400">Blocked</span>;
       default:
         return null;
     }
@@ -166,14 +177,17 @@ export default function TasksView() {
     }
   };
 
+  const blockedCount = stats.blocked ?? tasks.filter(t => t.status === 'blocked').length;
+
   return (
     <div className="flex flex-col h-full bg-[var(--bg-primary)] overflow-hidden">
       {/* Stats Cards */}
       <div className="shrink-0 p-4 border-b border-[var(--border)]">
-        <div className="grid grid-cols-5 gap-2 sm:gap-4">
+        <div className="grid grid-cols-6 gap-2 sm:gap-4">
           <StatCard label="Total" value={stats.total} />
           <StatCard label="Pending" value={stats.pending} color="yellow" />
           <StatCard label="Running" value={stats.running} color="blue" pulse />
+          <StatCard label="Blocked" value={blockedCount} color="orange" />
           <StatCard label="Done" value={stats.done} color="green" />
           <StatCard label="Failed" value={stats.failed} color="red" />
         </div>
@@ -189,6 +203,7 @@ export default function TasksView() {
           <option value="">All Status</option>
           <option value="pending">Pending</option>
           <option value="running">Running</option>
+          <option value="blocked">Blocked</option>
           <option value="done">Done</option>
           <option value="failed">Failed</option>
         </select>
@@ -313,6 +328,8 @@ export default function TasksView() {
           task={selectedTask}
           onClose={() => setSelectedTask(null)}
           onDelete={() => handleDelete(selectedTask.id)}
+          onIntervene={() => { setSelectedTask(null); fetchTasks(); }}
+          onToast={(msg, type) => setToast({ message: msg, type })}
         />
       )}
 
@@ -322,6 +339,20 @@ export default function TasksView() {
           onClose={() => setShowNewTaskModal(false)}
           onCreated={() => { setShowNewTaskModal(false); fetchTasks(); }}
         />
+      )}
+
+      {/* Toast */}
+      {toast && (
+        <div
+          className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] px-4 py-2.5 rounded-xl text-sm font-medium shadow-lg animate-fade-in max-w-[90vw] text-center ${
+            toast.type === 'success'
+              ? 'bg-green-500/90 text-white'
+              : 'bg-red-500/90 text-white'
+          }`}
+          onClick={() => setToast(null)}
+        >
+          {toast.message}
+        </div>
       )}
     </div>
   );
@@ -333,6 +364,7 @@ function StatCard({ label, value, color, pulse }: { label: string; value: number
     blue: 'text-blue-400',
     green: 'text-green-400',
     red: 'text-red-400',
+    orange: 'text-orange-400',
   }[color || ''] || 'text-white';
 
   return (
@@ -345,7 +377,108 @@ function StatCard({ label, value, color, pulse }: { label: string; value: number
   );
 }
 
-function TaskDetailModal({ task, onClose, onDelete }: { task: AgentTask; onClose: () => void; onDelete: () => void }) {
+function TaskDetailModal({ task, onClose, onDelete, onIntervene, onToast }: {
+  task: AgentTask;
+  onClose: () => void;
+  onDelete: () => void;
+  onIntervene: () => void;
+  onToast: (message: string, type: 'success' | 'error') => void;
+}) {
+  const [intervention, setIntervention] = useState('');
+  const [sending, setSending] = useState(false);
+  const [showReassign, setShowReassign] = useState(false);
+
+  const isActive = task.status === 'pending' || task.status === 'running' || task.status === 'blocked';
+
+  const handleIntervene = async () => {
+    if (!intervention.trim()) return;
+    setSending(true);
+
+    try {
+      // Step 1: Send intervention message to assigned agent
+      const message = [
+        `[Mudahale — Task #${task.id}]`,
+        `Orijinal gorev: ${task.title}`,
+        `Yeni talimat: ${intervention.trim()}`,
+        '',
+        `Gorev tamamlandiginda: task(action="update", taskId=${task.id}, status="done", summary="...")`,
+        `Basarisizsa: task(action="update", taskId=${task.id}, status="failed", summary="...")`,
+        `Engel varsa: task(action="update", taskId=${task.id}, status="blocked", summary="...")`,
+      ].join('\n');
+
+      const chatRes = await fetch('/api/gateway/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agentId: task.assigned_agent,
+          sessionKey: `agent:${task.assigned_agent}:main`,
+          message,
+        }),
+      });
+
+      if (!chatRes.ok) throw new Error('Mesaj gonderilemedi');
+
+      // Step 2: Set task back to running
+      await fetch(`/api/tasks/${task.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'running' }),
+      });
+
+      onToast(`Task #${task.id} icin mudahale gonderildi`, 'success');
+      onIntervene();
+    } catch (err: any) {
+      console.error('Intervention error:', err);
+      onToast(`Mudahale hatasi: ${err.message}`, 'error');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const handleReassign = async (newAgent: string) => {
+    setShowReassign(false);
+    try {
+      // Send the task context to the new agent
+      const message = [
+        `[Tekrar Atama — Task #${task.id}]`,
+        `Orijinal gorev: ${task.title}`,
+        task.description ? `Aciklama: ${task.description}` : '',
+        task.result ? `Onceki sonuc/durum: ${task.result}` : '',
+        '',
+        `Bu gorev sana yeniden atandi. Gorevi tamamla.`,
+        `Gorev tamamlandiginda: task(action="update", taskId=${task.id}, status="done", summary="...")`,
+      ].filter(Boolean).join('\n');
+
+      const chatRes = await fetch('/api/gateway/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agentId: newAgent,
+          sessionKey: `agent:${newAgent}:main`,
+          message,
+        }),
+      });
+
+      if (!chatRes.ok) throw new Error('Mesaj gonderilemedi');
+
+      // Update task: change assigned_agent and set running
+      await fetch(`/api/tasks/${task.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: 'running',
+          metadata: { ...task.metadata, reassigned_from: task.assigned_agent, reassigned_to: newAgent },
+        }),
+      });
+
+      onToast(`Task #${task.id} ${newAgent}'e atandi`, 'success');
+      onIntervene();
+    } catch (err: any) {
+      console.error('Reassign error:', err);
+      onToast(`Atama hatasi: ${err.message}`, 'error');
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
@@ -367,6 +500,7 @@ function TaskDetailModal({ task, onClose, onDelete }: { task: AgentTask; onClose
               task.status === 'pending' ? 'bg-yellow-500/20 text-yellow-400' :
               task.status === 'running' ? 'bg-blue-500/20 text-blue-400' :
               task.status === 'done' ? 'bg-green-500/20 text-green-400' :
+              task.status === 'blocked' ? 'bg-orange-500/10 text-orange-400' :
               'bg-red-500/20 text-red-400'
             }`}>{task.status}</span>
             <span className="px-2 py-1 text-xs rounded-full bg-[var(--bg-tertiary)] text-[var(--text-secondary)]">{task.priority}</span>
@@ -429,6 +563,53 @@ function TaskDetailModal({ task, onClose, onDelete }: { task: AgentTask; onClose
               <pre className="text-xs text-[var(--text-secondary)] bg-[var(--bg-primary)] p-3 rounded-lg overflow-x-auto whitespace-pre-wrap">
                 {JSON.stringify(task.metadata, null, 2)}
               </pre>
+            </div>
+          )}
+
+          {/* Intervention Panel */}
+          {isActive && (
+            <div className="border-t border-[var(--border)] pt-4">
+              <div className="text-xs text-[var(--text-muted)] mb-2 font-medium">Mudahale Et</div>
+              <textarea
+                value={intervention}
+                onChange={e => setIntervention(e.target.value)}
+                rows={3}
+                className="w-full bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:border-[var(--accent)] resize-none"
+                placeholder="Yeni talimat yaz..."
+              />
+              <div className="flex gap-2 mt-2">
+                <button
+                  onClick={handleIntervene}
+                  disabled={!intervention.trim() || sending}
+                  className="px-4 py-2 text-sm bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white rounded-lg transition-colors disabled:opacity-50"
+                >
+                  {sending ? 'Gonderiliyor...' : 'Gonder'}
+                </button>
+                <div className="relative">
+                  <button
+                    onClick={() => setShowReassign(!showReassign)}
+                    className="px-4 py-2 text-sm bg-[var(--bg-tertiary)] hover:bg-[var(--bg-hover)] text-[var(--text-secondary)] rounded-lg transition-colors flex items-center gap-1"
+                  >
+                    Tekrar Ata
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                  {showReassign && (
+                    <div className="absolute bottom-full left-0 mb-1 w-48 max-h-60 overflow-y-auto bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg shadow-xl z-10">
+                      {AGENTS.filter(a => a !== task.assigned_agent).map(a => (
+                        <button
+                          key={a}
+                          onClick={() => handleReassign(a)}
+                          className="w-full text-left px-3 py-2 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors"
+                        >
+                          {a}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           )}
         </div>

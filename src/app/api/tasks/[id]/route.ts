@@ -3,6 +3,35 @@ import { query, AgentTask } from '@/lib/db';
 
 type RouteParams = { params: Promise<{ id: string }> };
 
+// GET /api/tasks/[id] - Get single task
+export async function GET(_request: NextRequest, { params }: RouteParams) {
+  try {
+    const { id } = await params;
+    const taskId = parseInt(id, 10);
+
+    if (isNaN(taskId)) {
+      return NextResponse.json({ error: 'Invalid task ID' }, { status: 400 });
+    }
+
+    const result = await query<AgentTask>(
+      'SELECT * FROM agent_tasks WHERE id = $1',
+      [taskId]
+    );
+
+    if (result.rowCount === 0) {
+      return NextResponse.json({ error: 'Task not found' }, { status: 404 });
+    }
+
+    return NextResponse.json(result.rows[0]);
+  } catch (err) {
+    console.error('GET /api/tasks/[id] error:', err);
+    return NextResponse.json(
+      { error: 'Failed to get task' },
+      { status: 500 }
+    );
+  }
+}
+
 // PATCH /api/tasks/[id] - Update task
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
   try {
@@ -26,7 +55,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       values.push(status);
 
       // Auto-set timestamps based on status
-      if (status === 'running') {
+      if (status === 'running' || status === 'blocked') {
         updates.push(`started_at = COALESCE(started_at, NOW())`);
       } else if (status === 'done' || status === 'failed') {
         updates.push(`completed_at = NOW()`);
