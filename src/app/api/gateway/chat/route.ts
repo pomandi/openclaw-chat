@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { isAuthenticatedFromRequest } from '@/lib/auth';
 import { getGatewayWS } from '@/lib/gateway-ws';
 import { inferMimeTypeFromFilename } from '@/lib/types';
-import { writeFile, mkdir } from 'fs/promises';
-import { join } from 'path';
+// File saving is done via external file-receiver service on host
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // Reduced since this is now just an API call, not streaming
@@ -79,52 +78,39 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Save non-image files to the target agent's workspace via host gateway
+    // Save non-image files to host via file-receiver service (bypasses Docker volume issues)
     const savedFilePaths: string[] = [];
+    const FILE_RECEIVER_URL = process.env.FILE_RECEIVER_URL || 'http://host.docker.internal:18900';
+    const FILE_RECEIVER_TOKEN = process.env.FILE_RECEIVER_TOKEN || 'fr-pomandi-2026';
+
     for (const att of wsAttachments) {
       const isImage = att.mimeType.startsWith('image/') && !att.mimeType.includes('photoshop');
       if (isImage) continue;
 
       try {
-        const safeName = att.fileName.replace(/[^a-zA-Z0-9._\-\s\u00C0-\u024F\u0400-\u04FF\u4E00-\u9FFF]/g, '_');
-        const workspaceName = agentId === 'main' ? 'workspace' : `workspace-${agentId}`;
-        const relPath = `${workspaceName}/uploads/${safeName}`;
+        const res = await fetch(`${FILE_RECEIVER_URL}/save`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${FILE_RECEIVER_TOKEN}`,
+          },
+          body: JSON.stringify({
+            agentId,
+            fileName: att.fileName,
+            content: att.content,
+          }),
+        });
 
-        // Use gateway HTTP to save file on host via exec-like endpoint
-        const gwHttpUrl = process.env.OPENCLAW_GATEWAY_HTTP_URL || 'https://gw.pomandi.com';
-        const gwToken = process.env.OPENCLAW_GATEWAY_TOKEN || '';
-
-        // Try saving via multiple paths (volume mount or gateway)
-        const possiblePaths = [
-          '/data/openclaw-home',           // Docker volume mount
-          process.env.HOME ? join(process.env.HOME, '.openclaw') : null,  // Direct host
-        ].filter(Boolean) as string[];
-
-        let saved = false;
-        for (const basePath of possiblePaths) {
-          try {
-            const workspaceDir = join(basePath, workspaceName);
-            const uploadsDir = join(workspaceDir, 'uploads');
-            await mkdir(uploadsDir, { recursive: true });
-            const filePath = join(uploadsDir, safeName);
-            await writeFile(filePath, Buffer.from(att.content, 'base64'));
-
-            // Map container path to host path for agent access
-            const hostPath = filePath.replace('/data/openclaw-home', '/home/claude/.openclaw');
-            savedFilePaths.push(hostPath);
-            console.log(`[API] Saved attachment: ${filePath} → host: ${hostPath} (${att.mimeType}, ${Buffer.from(att.content, 'base64').length} bytes)`);
-            saved = true;
-            break;
-          } catch (pathErr: any) {
-            console.warn(`[API] Path ${basePath} failed: ${pathErr.message}`);
-          }
-        }
-
-        if (!saved) {
-          console.error(`[API] Could not save ${att.fileName} to any path`);
+        if (res.ok) {
+          const result = await res.json() as { ok: boolean; path: string };
+          savedFilePaths.push(result.path);
+          console.log(`[API] File saved via receiver: ${result.path}`);
+        } else {
+          const errText = await res.text();
+          console.error(`[API] File receiver error (${res.status}): ${errText}`);
         }
       } catch (saveErr: any) {
-        console.error(`[API] Failed to save attachment ${att.fileName}:`, saveErr.message);
+        console.error(`[API] Failed to reach file receiver for ${att.fileName}:`, saveErr.message);
       }
     }
 
