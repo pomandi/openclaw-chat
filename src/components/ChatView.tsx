@@ -76,6 +76,9 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
   const [dragOver, setDragOver] = useState(false);
   const [voiceMode, setVoiceMode] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(true);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedMessageIds, setSelectedMessageIds] = useState<Set<string>>(new Set());
+  const [forwardingSelection, setForwardingSelection] = useState(false);
   
   // Pull to refresh state
   const [pullDistance, setPullDistance] = useState(0);
@@ -197,6 +200,12 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
       cancelled = true;
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
+  }, [sessionKey]);
+
+  // Reset selection mode when session changes
+  useEffect(() => {
+    setSelectionMode(false);
+    setSelectedMessageIds(new Set());
   }, [sessionKey]);
 
   // SSE connection for real-time events (replaces polling)
@@ -633,6 +642,85 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
     })();
   }
 
+  function toggleSelectionMode() {
+    setSelectionMode(prev => {
+      const next = !prev;
+      if (!next) setSelectedMessageIds(new Set());
+      return next;
+    });
+  }
+
+  function toggleMessageSelection(messageId: string) {
+    if (!selectionMode) return;
+    setSelectedMessageIds(prev => {
+      const next = new Set(prev);
+      if (next.has(messageId)) next.delete(messageId);
+      else next.add(messageId);
+      return next;
+    });
+  }
+
+  async function forwardSelectedToMain(mode: 'solve' | 'explain') {
+    const selectedMessages = messages
+      .filter(m => selectedMessageIds.has(m.id) && (m.role === 'user' || m.role === 'assistant'))
+      .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+
+    if (selectedMessages.length === 0) return;
+
+    setForwardingSelection(true);
+    try {
+      const instruction = mode === 'solve'
+        ? 'Bu durumu çöz. Gerekli aksiyonu net ve uygulanabilir şekilde ver.'
+        : 'Bu durumu açıkla ve net bir çözüm planı çıkar.';
+
+      const lines = selectedMessages.map((m, idx) => {
+        const time = new Date(m.timestamp || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const role = m.role.toUpperCase();
+        const attachmentInfo = m.attachments?.length
+          ? ` | attachments: ${m.attachments.map(a => a.name).join(', ')}`
+          : '';
+        return `${idx + 1}. [${role} ${time}] ${m.content || '(empty)'}${attachmentInfo}`;
+      });
+
+      const forwardedContext = [
+        '[Forwarded context from app.pomandi]',
+        `Source agent: ${agentName} (${agent.id})`,
+        `Source session: ${sessionKey}`,
+        `Selected messages: ${selectedMessages.length}`,
+        '',
+        ...lines,
+        '',
+        `Instruction: ${instruction}`,
+      ].join('\n');
+
+      const res = await fetch('/api/gateway/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agentId: 'main',
+          sessionKey: 'agent:main:main',
+          message: forwardedContext,
+        }),
+      });
+
+      if (!res.ok) {
+        let errBody = '';
+        try { errBody = await res.text(); } catch {}
+        const parsed = errBody ? (() => { try { return JSON.parse(errBody); } catch { return null; } })() : null;
+        throw new Error(parsed?.error || `Server error: ${res.status}`);
+      }
+
+      setSelectionMode(false);
+      setSelectedMessageIds(new Set());
+      window.alert('✅ Seçilen mesajlar Main agente iletildi.');
+    } catch (err: any) {
+      console.error('[Chat] forwardSelectedToMain error:', err);
+      window.alert(`Forward failed: ${err.message}`);
+    } finally {
+      setForwardingSelection(false);
+    }
+  }
+
   const hasInput = input.trim().length > 0 || attachments.length > 0;
 
   return (
@@ -692,6 +780,39 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
           </button>
         )}
 
+        {selectionMode && selectedMessageIds.size > 0 && (
+          <>
+            <button
+              onClick={() => forwardSelectedToMain('solve')}
+              disabled={forwardingSelection}
+              className="px-2.5 py-1.5 rounded-lg bg-[var(--accent)]/20 text-[var(--accent)] text-xs font-medium hover:bg-[var(--accent)]/30 disabled:opacity-50"
+              title="Seçilen mesajları Main agente ilet ve çöz"
+            >
+              Çöz ({selectedMessageIds.size})
+            </button>
+            <button
+              onClick={() => forwardSelectedToMain('explain')}
+              disabled={forwardingSelection}
+              className="px-2.5 py-1.5 rounded-lg bg-[var(--bg-tertiary)] text-[var(--text-secondary)] text-xs font-medium hover:bg-[var(--bg-hover)] disabled:opacity-50"
+              title="Seçilen mesajları Main agente ilet ve açıkla"
+            >
+              Açıkla
+            </button>
+          </>
+        )}
+
+        <button
+          onClick={toggleSelectionMode}
+          className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+            selectionMode
+              ? 'bg-[var(--error)]/15 text-[var(--error)] hover:bg-[var(--error)]/25'
+              : 'bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]'
+          }`}
+          title={selectionMode ? 'Seçimi kapat' : 'Mesaj seçimi aç'}
+        >
+          {selectionMode ? 'İptal' : 'Seç'}
+        </button>
+
         {sending ? (
           <div className="text-xs text-[var(--accent)] flex items-center gap-1.5 shrink-0">
             <div className="w-2 h-2 bg-[var(--accent)] rounded-full animate-pulse" />
@@ -736,7 +857,14 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
         ) : (
           <>
             {messages.map((msg) => (
-              <MessageBubble key={msg.id} message={msg} agentEmoji={agentEmoji} />
+              <MessageBubble
+                key={msg.id}
+                message={msg}
+                agentEmoji={agentEmoji}
+                selectable={selectionMode && (msg.role === 'user' || msg.role === 'assistant')}
+                selected={selectedMessageIds.has(msg.id)}
+                onToggleSelect={toggleMessageSelection}
+              />
             ))}
             
             {/* Streaming response */}
@@ -917,7 +1045,19 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
   );
 }
 
-function MessageBubble({ message, agentEmoji }: { message: ChatMessage; agentEmoji: string }) {
+function MessageBubble({
+  message,
+  agentEmoji,
+  selectable,
+  selected,
+  onToggleSelect,
+}: {
+  message: ChatMessage;
+  agentEmoji: string;
+  selectable?: boolean;
+  selected?: boolean;
+  onToggleSelect?: (messageId: string) => void;
+}) {
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
 
@@ -942,14 +1082,24 @@ function MessageBubble({ message, agentEmoji }: { message: ChatMessage; agentEmo
       : `${msgDate.toLocaleDateString([], { day: 'numeric', month: 'short' })} ${msgDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
 
   return (
-    <div className={`flex gap-2 animate-fade-in ${isUser ? 'flex-row-reverse' : ''}`}>
+    <div
+      className={`flex gap-2 animate-fade-in ${isUser ? 'flex-row-reverse' : ''} ${selectable ? 'cursor-pointer' : ''}`}
+      onClick={() => {
+        if (selectable && onToggleSelect) onToggleSelect(message.id);
+      }}
+    >
       {!isUser && (
         <div className="w-8 h-8 rounded-full bg-[var(--bg-tertiary)] flex items-center justify-center text-sm shrink-0 mt-1">
           {agentEmoji}
         </div>
       )}
       
-      <div className="max-w-[85%]">
+      <div className={`max-w-[85%] ${selected ? 'ring-2 ring-[var(--accent)] rounded-2xl' : ''}`}>
+        {selectable && (
+          <div className={`mb-1 text-[10px] ${isUser ? 'text-right' : 'text-left'} text-[var(--text-muted)]`}>
+            {selected ? '☑ Seçili' : '☐ Seç'}
+          </div>
+        )}
         {/* Attachments */}
         {message.attachments && message.attachments.length > 0 && (
           <div className={`flex flex-wrap gap-2 mb-1 ${isUser ? 'justify-end' : 'justify-start'}`}>
@@ -975,7 +1125,14 @@ function MessageBubble({ message, agentEmoji }: { message: ChatMessage; agentEmo
                   src={att.previewUrl}
                   alt={att.name}
                   className="max-w-[200px] max-h-[200px] rounded-xl object-cover cursor-pointer hover:opacity-90 transition-opacity"
-                  onClick={() => window.open(att.dataUrl, '_blank')}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (selectable && onToggleSelect) {
+                      onToggleSelect(message.id);
+                      return;
+                    }
+                    window.open(att.dataUrl, '_blank');
+                  }}
                 />
               ) : (
                 <div
