@@ -34,6 +34,8 @@ export async function POST(req: NextRequest) {
     }> = [];
 
     const attachmentNotes: string[] = [];
+    const seenAttachmentKeys = new Set<string>();
+    const seenNoteKeys = new Set<string>();
 
     if (attachments && attachments.length > 0) {
       for (const att of attachments) {
@@ -47,6 +49,10 @@ export async function POST(req: NextRequest) {
         const mimeType = (att.mimeType || base64Match?.[1] || inferredMime || 'application/octet-stream').toLowerCase();
         const fileName = att.name || `attachment-${Date.now()}`;
 
+        const attachmentKey = `${fileName.toLowerCase()}|${mimeType}|${base64Content.length}`;
+        if (seenAttachmentKeys.has(attachmentKey)) continue;
+        seenAttachmentKeys.add(attachmentKey);
+
         wsAttachments.push({
           type: att.type || 'file',
           mimeType,
@@ -56,6 +62,10 @@ export async function POST(req: NextRequest) {
 
         // Fallback note so assistant still sees non-image docs if backend profile drops them.
         if (att.type === 'file') {
+          const noteKey = `${fileName.toLowerCase()}|${mimeType}`;
+          if (seenNoteKeys.has(noteKey)) continue;
+          seenNoteKeys.add(noteKey);
+
           if (mimeType === 'application/pdf' || fileName.toLowerCase().endsWith('.pdf')) {
             attachmentNotes.push(`[PDF attached: ${fileName}]`);
           } else if (fileName.toLowerCase().endsWith('.psd') || mimeType.includes('photoshop')) {
