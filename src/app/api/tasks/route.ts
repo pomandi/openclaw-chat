@@ -25,6 +25,18 @@ export async function GET(request: NextRequest) {
       params.push(assignedAgent);
     }
 
+    const createdBy = searchParams.get('createdBy');
+    if (createdBy) {
+      conditions.push(`created_by = $${paramIndex++}`);
+      params.push(createdBy);
+    }
+
+    const metadataType = searchParams.get('metadataType');
+    if (metadataType) {
+      conditions.push(`metadata->>'type' = $${paramIndex++}`);
+      params.push(metadataType);
+    }
+
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
     // Get total count

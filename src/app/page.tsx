@@ -49,6 +49,7 @@ export default function Home() {
   const [unreadMap, setUnreadMap] = useState<Record<string, AgentUnreadInfo>>({});
   const [lastSeenMap, setLastSeenMap] = useState<Record<string, number>>(loadLastSeen);
   const [activeView, setActiveView] = useState<AppView>('chat');
+  const [pendingTaskCount, setPendingTaskCount] = useState(0);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Fetch unread info
@@ -123,20 +124,38 @@ export default function Home() {
     setLoadingAgents(false);
   }
 
-  // Start polling for unread when authenticated
+  // Fetch pending forward task count
+  const fetchPendingTaskCount = useCallback(async () => {
+    try {
+      const res = await fetch('/api/tasks?status=pending&metadataType=forward&limit=1');
+      if (res.ok) {
+        const data = await res.json();
+        setPendingTaskCount(data.pagination?.total || 0);
+      }
+    } catch {
+      // silent fail
+    }
+  }, []);
+
+  // Start polling for unread + pending tasks when authenticated
   useEffect(() => {
     if (!authenticated) return;
 
     // Initial fetch
     fetchUnread();
+    fetchPendingTaskCount();
 
     // Poll every 30s
-    pollRef.current = setInterval(fetchUnread, UNREAD_POLL_INTERVAL);
+    pollRef.current = setInterval(() => {
+      fetchUnread();
+      fetchPendingTaskCount();
+    }, UNREAD_POLL_INTERVAL);
 
     // Also fetch on visibility change (tab becomes active)
     function onVisibility() {
       if (document.visibilityState === 'visible') {
         fetchUnread();
+        fetchPendingTaskCount();
       }
     }
     document.addEventListener('visibilitychange', onVisibility);
@@ -145,7 +164,7 @@ export default function Home() {
       if (pollRef.current) clearInterval(pollRef.current);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [authenticated, fetchUnread]);
+  }, [authenticated, fetchUnread, fetchPendingTaskCount]);
 
   // Mark current agent as read when receiving new messages
   useEffect(() => {
@@ -224,7 +243,7 @@ export default function Home() {
   return (
     <div className="flex flex-col h-dvh overflow-hidden" style={{ height: '100dvh' }}>
       {/* Navigation Tabs - always visible on top */}
-      <NavTabs activeView={activeView} onChangeView={setActiveView} onRefresh={handleRefresh} />
+      <NavTabs activeView={activeView} onChangeView={setActiveView} onRefresh={handleRefresh} pendingTaskCount={pendingTaskCount} />
 
       {/* Content based on active view */}
       {activeView === 'arena' ? (
@@ -290,6 +309,7 @@ export default function Home() {
               <ChatView
                 key={selectedAgent.id}
                 agent={selectedAgent}
+                agents={agents}
                 sessionKey={getSessionKey(selectedAgent.id)}
                 onOpenSidebar={() => setSidebarOpen(true)}
                 onBack={goBack}
@@ -304,7 +324,7 @@ export default function Home() {
   );
 }
 
-function NavTabs({ activeView, onChangeView, onRefresh }: { activeView: AppView; onChangeView: (view: AppView) => void; onRefresh?: () => void }) {
+function NavTabs({ activeView, onChangeView, onRefresh, pendingTaskCount = 0 }: { activeView: AppView; onChangeView: (view: AppView) => void; onRefresh?: () => void; pendingTaskCount?: number }) {
   return (
     <div className="shrink-0 flex items-center gap-1 px-4 py-2 bg-[var(--bg-secondary)] border-b border-[var(--border)] safe-top">
       <span className="text-xl mr-2">🐾</span>
@@ -320,13 +340,18 @@ function NavTabs({ activeView, onChangeView, onRefresh }: { activeView: AppView;
       </button>
       <button
         onClick={() => onChangeView('tasks')}
-        className={`px-4 py-1.5 text-sm font-medium rounded-lg transition-colors ${
+        className={`relative px-4 py-1.5 text-sm font-medium rounded-lg transition-colors ${
           activeView === 'tasks'
             ? 'bg-[var(--accent)] text-white'
             : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]'
         }`}
       >
         Tasks
+        {pendingTaskCount > 0 && (
+          <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-[var(--error)] text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+            {pendingTaskCount}
+          </span>
+        )}
       </button>
       <button
         onClick={() => onChangeView('arena')}

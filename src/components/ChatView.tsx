@@ -14,6 +14,15 @@ import {
   SUPPORTED_PSD_TYPES,
   inferMimeTypeFromFilename,
 } from '@/lib/types';
+// Forward task type (subset of AgentTask from db)
+interface ForwardTask {
+  id: number;
+  title: string;
+  created_by: string;
+  status: string;
+  metadata: Record<string, unknown> | string | null;
+  created_at: string;
+}
 import MarkdownRenderer from './MarkdownRenderer';
 import VoiceRecorder, { AudioBubblePlayer } from './VoiceRecorder';
 
@@ -59,12 +68,13 @@ function shouldGroupMessages(current: ChatMessage, previous: ChatMessage): boole
 
 interface ChatViewProps {
   agent: Agent;
+  agents: Agent[];
   sessionKey: string;
   onOpenSidebar?: () => void;
   onBack?: () => void;
 }
 
-export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: ChatViewProps) {
+export default function ChatView({ agent, agents, sessionKey, onOpenSidebar, onBack }: ChatViewProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -79,7 +89,15 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedMessageIds, setSelectedMessageIds] = useState<Set<string>>(new Set());
   const [forwardingSelection, setForwardingSelection] = useState(false);
-  
+
+  // Forward/Resolve state
+  const [showAgentPicker, setShowAgentPicker] = useState(false);
+  const [forwardMode, setForwardMode] = useState<'solve' | 'explain'>('solve');
+  const [openTasksForAgent, setOpenTasksForAgent] = useState<ForwardTask[]>([]);
+  const [resolvingTaskId, setResolvingTaskId] = useState<number | null>(null);
+  const [showTaskPicker, setShowTaskPicker] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
   // Pull to refresh state
   const [pullDistance, setPullDistance] = useState(0);
   const [isPulling, setIsPulling] = useState(false);
@@ -206,7 +224,35 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
   useEffect(() => {
     setSelectionMode(false);
     setSelectedMessageIds(new Set());
+    setResolvingTaskId(null);
+    setShowAgentPicker(false);
+    setShowTaskPicker(false);
   }, [sessionKey]);
+
+  // Poll open forward tasks for this agent
+  useEffect(() => {
+    async function fetchOpenTasks() {
+      try {
+        const res = await fetch(`/api/tasks/open-for-agent?agentId=${encodeURIComponent(agent.id)}`);
+        if (res.ok) {
+          const data = await res.json();
+          setOpenTasksForAgent(data.tasks || []);
+        }
+      } catch {
+        // silent
+      }
+    }
+    fetchOpenTasks();
+    const interval = setInterval(fetchOpenTasks, 30_000);
+    return () => clearInterval(interval);
+  }, [agent.id]);
+
+  // Toast auto-dismiss
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(timer);
+  }, [toast]);
 
   // SSE connection for real-time events (replaces polling)
   useEffect(() => {
@@ -642,14 +688,6 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
     })();
   }
 
-  function toggleSelectionMode() {
-    setSelectionMode(prev => {
-      const next = !prev;
-      if (!next) setSelectedMessageIds(new Set());
-      return next;
-    });
-  }
-
   function toggleMessageSelection(messageId: string) {
     if (!selectionMode) return;
     setSelectedMessageIds(prev => {
@@ -660,7 +698,15 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
     });
   }
 
-  async function forwardSelectedToMain(mode: 'solve' | 'explain') {
+  // Forward: open agent picker for Çöz or Açıkla
+  function startForward(mode: 'solve' | 'explain') {
+    setForwardMode(mode);
+    setShowAgentPicker(true);
+  }
+
+  // Forward selected messages to a target agent
+  async function forwardSelectedToAgent(targetAgent: Agent) {
+    setShowAgentPicker(false);
     const selectedMessages = messages
       .filter(m => selectedMessageIds.has(m.id) && (m.role === 'user' || m.role === 'assistant'))
       .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
@@ -668,10 +714,18 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
     if (selectedMessages.length === 0) return;
 
     setForwardingSelection(true);
+    const targetName = getAgentName(targetAgent);
+
     try {
-      const instruction = mode === 'solve'
+      const instruction = forwardMode === 'solve'
         ? 'Bu durumu çöz. Gerekli aksiyonu net ve uygulanabilir şekilde ver.'
         : 'Bu durumu açıkla ve net bir çözüm planı çıkar.';
+
+      const forwardedMsgs = selectedMessages.map(m => ({
+        role: m.role,
+        content: m.content || '',
+        timestamp: m.timestamp,
+      }));
 
       const lines = selectedMessages.map((m, idx) => {
         const time = new Date(m.timestamp || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -682,10 +736,40 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
         return `${idx + 1}. [${role} ${time}] ${m.content || '(empty)'}${attachmentInfo}`;
       });
 
+      // Step 1: Create task
+      const taskMetadata = {
+        type: 'forward',
+        mode: forwardMode,
+        source_agent: agent.id,
+        source_session: sessionKey,
+        target_agent: targetAgent.id,
+        target_session: `agent:${targetAgent.id}:main`,
+        forwarded_messages: forwardedMsgs,
+      };
+
+      const taskRes = await fetch('/api/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: `[${forwardMode === 'solve' ? 'Çöz' : 'Açıkla'}] ${agentName} → ${targetName}: ${selectedMessages.length} mesaj`,
+          description: lines.join('\n'),
+          createdBy: agent.id,
+          assignedAgent: targetAgent.id,
+          priority: 'normal',
+          metadata: taskMetadata,
+        }),
+      });
+
+      if (!taskRes.ok) throw new Error('Task oluşturulamadı');
+      const task = await taskRes.json();
+
+      // Step 2: Send context to target agent
       const forwardedContext = [
-        '[Forwarded context from app.pomandi]',
+        `[Forward Task #${task.id} from app.pomandi]`,
         `Source agent: ${agentName} (${agent.id})`,
         `Source session: ${sessionKey}`,
+        `Task ID: ${task.id}`,
+        `Mode: ${forwardMode}`,
         `Selected messages: ${selectedMessages.length}`,
         '',
         ...lines,
@@ -693,29 +777,136 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
         `Instruction: ${instruction}`,
       ].join('\n');
 
-      const res = await fetch('/api/gateway/chat', {
+      const chatRes = await fetch('/api/gateway/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          agentId: 'main',
-          sessionKey: 'agent:main:main',
+          agentId: targetAgent.id,
+          sessionKey: `agent:${targetAgent.id}:main`,
           message: forwardedContext,
         }),
       });
 
-      if (!res.ok) {
-        let errBody = '';
-        try { errBody = await res.text(); } catch {}
-        const parsed = errBody ? (() => { try { return JSON.parse(errBody); } catch { return null; } })() : null;
-        throw new Error(parsed?.error || `Server error: ${res.status}`);
-      }
+      if (!chatRes.ok) throw new Error(`${targetName}'e mesaj gönderilemedi`);
+
+      // Step 3: Mark task as running
+      await fetch(`/api/tasks/${task.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'running' }),
+      });
 
       setSelectionMode(false);
       setSelectedMessageIds(new Set());
-      window.alert('✅ Seçilen mesajlar Main agente iletildi.');
+      setToast({ message: `${selectedMessages.length} mesaj ${targetName}'e iletildi (Task #${task.id})`, type: 'success' });
     } catch (err: any) {
-      console.error('[Chat] forwardSelectedToMain error:', err);
-      window.alert(`Forward failed: ${err.message}`);
+      console.error('[Chat] forwardSelectedToAgent error:', err);
+      setToast({ message: `Forward hatası: ${err.message}`, type: 'error' });
+    } finally {
+      setForwardingSelection(false);
+    }
+  }
+
+  // Resolve: start resolution flow
+  function startResolve() {
+    if (openTasksForAgent.length === 1) {
+      // Single task — go directly to selection mode
+      setResolvingTaskId(openTasksForAgent[0].id);
+      setSelectionMode(true);
+      setSelectedMessageIds(new Set());
+    } else if (openTasksForAgent.length > 1) {
+      // Multiple tasks — show task picker
+      setShowTaskPicker(true);
+    }
+  }
+
+  function selectTaskToResolve(taskId: number) {
+    setShowTaskPicker(false);
+    setResolvingTaskId(taskId);
+    setSelectionMode(true);
+    setSelectedMessageIds(new Set());
+  }
+
+  // Complete resolution: send selected messages back to source agent
+  async function resolveForwardTask() {
+    if (!resolvingTaskId) return;
+
+    const selectedMessages = messages
+      .filter(m => selectedMessageIds.has(m.id) && (m.role === 'user' || m.role === 'assistant'))
+      .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+
+    if (selectedMessages.length === 0) return;
+
+    const task = openTasksForAgent.find(t => t.id === resolvingTaskId);
+    if (!task) return;
+
+    setForwardingSelection(true);
+
+    try {
+      const metadata = typeof task.metadata === 'string' ? JSON.parse(task.metadata) : task.metadata;
+      const sourceAgentId = metadata?.source_agent || task.created_by;
+      const sourceSession = metadata?.source_session || `agent:${sourceAgentId}:main`;
+      const sourceAgentObj = agents.find(a => a.id === sourceAgentId);
+      const sourceAgentName = sourceAgentObj ? getAgentName(sourceAgentObj) : sourceAgentId;
+
+      const resolutionMsgs = selectedMessages.map(m => ({
+        role: m.role,
+        content: m.content || '',
+        timestamp: m.timestamp,
+      }));
+
+      const resolutionText = selectedMessages.map((m, idx) => {
+        const time = new Date(m.timestamp || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const role = m.role.toUpperCase();
+        return `${idx + 1}. [${role} ${time}] ${m.content || '(empty)'}`;
+      }).join('\n');
+
+      // Step 1: Update task as done with resolution
+      const updatedMetadata = {
+        ...metadata,
+        resolution_messages: resolutionMsgs,
+        resolved_from_session: sessionKey,
+      };
+
+      await fetch(`/api/tasks/${resolvingTaskId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: 'done',
+          result: resolutionText,
+          metadata: updatedMetadata,
+        }),
+      });
+
+      // Step 2: Send resolution back to source agent
+      const resolutionContext = [
+        `[Resolution for Task #${resolvingTaskId} from app.pomandi]`,
+        `Resolved by: ${agentName} (${agent.id})`,
+        `Original task: ${task.title}`,
+        `Resolution (${selectedMessages.length} messages):`,
+        '',
+        resolutionText,
+      ].join('\n');
+
+      await fetch('/api/gateway/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agentId: sourceAgentId,
+          sessionKey: sourceSession,
+          message: resolutionContext,
+        }),
+      });
+
+      // Clean up
+      setSelectionMode(false);
+      setSelectedMessageIds(new Set());
+      setResolvingTaskId(null);
+      setOpenTasksForAgent(prev => prev.filter(t => t.id !== resolvingTaskId));
+      setToast({ message: `Task #${resolvingTaskId} çözüldü, ${sourceAgentName}'e iletildi`, type: 'success' });
+    } catch (err: any) {
+      console.error('[Chat] resolveForwardTask error:', err);
+      setToast({ message: `Çözüm hatası: ${err.message}`, type: 'error' });
     } finally {
       setForwardingSelection(false);
     }
@@ -780,29 +971,61 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
           </button>
         )}
 
-        {selectionMode && selectedMessageIds.size > 0 && (
+        {/* Selection mode: forward or resolve buttons */}
+        {selectionMode && selectedMessageIds.size > 0 && !resolvingTaskId && (
           <>
             <button
-              onClick={() => forwardSelectedToMain('solve')}
+              onClick={() => startForward('solve')}
               disabled={forwardingSelection}
               className="px-2.5 py-1.5 rounded-lg bg-[var(--accent)]/20 text-[var(--accent)] text-xs font-medium hover:bg-[var(--accent)]/30 disabled:opacity-50"
-              title="Seçilen mesajları Main agente ilet ve çöz"
+              title="Seçilen mesajları bir agente ilet ve çöz"
             >
               Çöz ({selectedMessageIds.size})
             </button>
             <button
-              onClick={() => forwardSelectedToMain('explain')}
+              onClick={() => startForward('explain')}
               disabled={forwardingSelection}
               className="px-2.5 py-1.5 rounded-lg bg-[var(--bg-tertiary)] text-[var(--text-secondary)] text-xs font-medium hover:bg-[var(--bg-hover)] disabled:opacity-50"
-              title="Seçilen mesajları Main agente ilet ve açıkla"
+              title="Seçilen mesajları bir agente ilet ve açıkla"
             >
               Açıkla
             </button>
           </>
         )}
 
+        {/* Resolution mode: resolve button */}
+        {selectionMode && resolvingTaskId && selectedMessageIds.size > 0 && (
+          <button
+            onClick={resolveForwardTask}
+            disabled={forwardingSelection}
+            className="px-2.5 py-1.5 rounded-lg bg-green-500/20 text-green-400 text-xs font-medium hover:bg-green-500/30 disabled:opacity-50"
+            title="Seçilen mesajlarla task'ı çöz"
+          >
+            Çözüldü ({selectedMessageIds.size})
+          </button>
+        )}
+
+        {/* Open tasks resolve button (when not in selection mode) */}
+        {!selectionMode && openTasksForAgent.length > 0 && (
+          <button
+            onClick={startResolve}
+            className="px-2.5 py-1.5 rounded-lg bg-green-500/20 text-green-400 text-xs font-medium hover:bg-green-500/30 animate-pulse"
+            title="Açık forward task'ları çöz"
+          >
+            Çözüldü ({openTasksForAgent.length})
+          </button>
+        )}
+
         <button
-          onClick={toggleSelectionMode}
+          onClick={() => {
+            if (selectionMode) {
+              setSelectionMode(false);
+              setSelectedMessageIds(new Set());
+              setResolvingTaskId(null);
+            } else {
+              setSelectionMode(true);
+            }
+          }}
           className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
             selectionMode
               ? 'bg-[var(--error)]/15 text-[var(--error)] hover:bg-[var(--error)]/25'
@@ -954,6 +1177,76 @@ export default function ChatView({ agent, sessionKey, onOpenSidebar, onBack }: C
               </button>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Agent Picker Dropdown */}
+      {showAgentPicker && (
+        <div className="fixed inset-0 z-50" onClick={() => setShowAgentPicker(false)}>
+          <div className="absolute inset-0 bg-black/30" />
+          <div
+            className="absolute top-16 right-4 w-64 max-h-80 overflow-y-auto bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl shadow-2xl animate-fade-in"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="px-3 py-2 border-b border-[var(--border)] text-xs text-[var(--text-muted)] font-medium">
+              {forwardMode === 'solve' ? 'Çöz' : 'Açıkla'} — Hedef Agent Seç
+            </div>
+            {agents.filter(a => a.id !== agent.id).map(a => (
+              <button
+                key={a.id}
+                onClick={() => forwardSelectedToAgent(a)}
+                className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-[var(--bg-hover)] transition-colors text-left"
+              >
+                <span className="text-lg">{getAgentEmoji(a.id, a)}</span>
+                <div className="min-w-0">
+                  <div className="text-sm text-white font-medium truncate">{getAgentName(a)}</div>
+                  <div className="text-[10px] text-[var(--text-muted)] truncate">{a.id}</div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Task Picker Dropdown */}
+      {showTaskPicker && (
+        <div className="fixed inset-0 z-50" onClick={() => setShowTaskPicker(false)}>
+          <div className="absolute inset-0 bg-black/30" />
+          <div
+            className="absolute top-16 right-4 w-72 max-h-80 overflow-y-auto bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl shadow-2xl animate-fade-in"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="px-3 py-2 border-b border-[var(--border)] text-xs text-[var(--text-muted)] font-medium">
+              Çözülecek Task Seç
+            </div>
+            {openTasksForAgent.map(t => (
+              <button
+                key={t.id}
+                onClick={() => selectTaskToResolve(t.id)}
+                className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-[var(--bg-hover)] transition-colors text-left"
+              >
+                <span className="text-xs text-[var(--accent)] font-mono font-bold">#{t.id}</span>
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm text-white truncate">{t.title}</div>
+                  <div className="text-[10px] text-[var(--text-muted)]">from: {t.created_by}</div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Toast */}
+      {toast && (
+        <div
+          className={`fixed bottom-20 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-xl text-sm font-medium shadow-lg animate-fade-in max-w-[90vw] text-center ${
+            toast.type === 'success'
+              ? 'bg-green-500/90 text-white'
+              : 'bg-[var(--error)]/90 text-white'
+          }`}
+          onClick={() => setToast(null)}
+        >
+          {toast.message}
         </div>
       )}
 
