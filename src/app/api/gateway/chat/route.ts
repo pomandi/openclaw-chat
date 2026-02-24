@@ -86,7 +86,9 @@ export async function POST(req: NextRequest) {
       if (isImage) continue;
 
       try {
-        const OPENCLAW_HOME = process.env.OPENCLAW_HOME || join(process.env.HOME || '/home/claude', '.openclaw');
+        // In Docker: /data/openclaw-home is volume-mounted to host's ~/.openclaw
+        // On host: fallback to ~/.openclaw
+        const OPENCLAW_HOME = process.env.OPENCLAW_HOME || '/data/openclaw-home';
         const workspaceDir = agentId === 'main'
           ? join(OPENCLAW_HOME, 'workspace')
           : join(OPENCLAW_HOME, `workspace-${agentId}`);
