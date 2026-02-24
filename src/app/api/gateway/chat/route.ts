@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { isAuthenticatedFromRequest } from '@/lib/auth';
 import { getGatewayWS } from '@/lib/gateway-ws';
 import { inferMimeTypeFromFilename } from '@/lib/types';
+import { writeFile, mkdir } from 'fs/promises';
+import { join } from 'path';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // Reduced since this is now just an API call, not streaming
@@ -77,9 +79,39 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Save non-image files to the target agent's workspace
+    const savedFilePaths: string[] = [];
+    for (const att of wsAttachments) {
+      const isImage = att.mimeType.startsWith('image/') && !att.mimeType.includes('photoshop');
+      if (isImage) continue;
+
+      try {
+        const OPENCLAW_HOME = process.env.OPENCLAW_HOME || join(process.env.HOME || '/home/claude', '.openclaw');
+        const workspaceDir = agentId === 'main'
+          ? join(OPENCLAW_HOME, 'workspace')
+          : join(OPENCLAW_HOME, `workspace-${agentId}`);
+        const uploadsDir = join(workspaceDir, 'uploads');
+        await mkdir(uploadsDir, { recursive: true });
+
+        // Sanitize filename
+        const safeName = att.fileName.replace(/[^a-zA-Z0-9._\-\s\u00C0-\u024F\u0400-\u04FF\u4E00-\u9FFF]/g, '_');
+        const filePath = join(uploadsDir, safeName);
+        await writeFile(filePath, Buffer.from(att.content, 'base64'));
+        savedFilePaths.push(filePath);
+        console.log(`[API] Saved attachment: ${filePath} (${att.mimeType}, ${Buffer.from(att.content, 'base64').length} bytes)`);
+      } catch (saveErr: any) {
+        console.error(`[API] Failed to save attachment ${att.fileName}:`, saveErr.message);
+      }
+    }
+
+    // Build message with file paths so agent can access them
     const baseMessage = typeof message === 'string' ? message : '';
-    const outboundMessage = attachmentNotes.length > 0
-      ? `${baseMessage}\n${attachmentNotes.join('\n')}`.trim()
+    const allNotes = [...attachmentNotes];
+    if (savedFilePaths.length > 0) {
+      allNotes.push(`[Files saved to disk: ${savedFilePaths.join(', ')}]`);
+    }
+    const outboundMessage = allNotes.length > 0
+      ? `${baseMessage}\n${allNotes.join('\n')}`.trim()
       : baseMessage;
 
     try {
