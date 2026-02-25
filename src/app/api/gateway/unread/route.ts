@@ -8,12 +8,19 @@ export const dynamic = 'force-dynamic';
 const AGENTS_DIR = process.env.AGENTS_PATH || '/data/agents';
 
 // Agent IDs we care about
-const AGENT_IDS = [
-  'main', 'coding-agent', 'ops-monitor', 'pomamarketing',
-  'fatura-collector', 'mtm-tedarik', 'customer-relations', 'hr',
-  'vision', 'security', 'qa-tester', 'product-upload',
-  'seo-agent', 'personal-assistant', 'ads-merchant', 'investor',
-];
+// Auto-discover agent IDs from AGENTS_DIR instead of hardcoding
+function discoverAgentIds(): string[] {
+  try {
+    const entries = fs.readdirSync(AGENTS_DIR, { withFileTypes: true });
+    return entries
+      .filter(e => e.isDirectory() && !e.name.startsWith('_'))
+      .map(e => e.name);
+  } catch {
+    return [];
+  }
+}
+
+const AGENT_IDS = discoverAgentIds();
 
 function extractTextContent(content: any): string {
   if (typeof content === 'string') return content;
