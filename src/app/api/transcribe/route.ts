@@ -4,7 +4,7 @@ import { isAuthenticatedFromRequest } from '@/lib/auth';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-const WHISPER_URL = process.env.WHISPER_URL || '';
+const WHISPER_URL = process.env.WHISPER_URL || 'http://10.0.1.1:18791';
 const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN || '';
 const GATEWAY_HTTP_URL = process.env.OPENCLAW_GATEWAY_HTTP_URL || 'http://127.0.0.1:18789';
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
