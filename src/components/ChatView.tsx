@@ -7,7 +7,6 @@ import {
   Attachment,
   getAgentEmoji,
   getAgentName,
-  getDepartmentColor,
   MAX_FILE_SIZE,
   SUPPORTED_IMAGE_TYPES,
   SUPPORTED_FILE_TYPES,
@@ -961,21 +960,11 @@ export default function ChatView({ agent, agents, sessionKey, onOpenSidebar, onB
         </div>
         
         <div className="flex-1 min-w-0">
-          <div className="font-semibold text-white text-[15px] truncate flex items-center gap-1.5">
-            {agent.code && (
-              <span
-                className="font-mono text-[11px] px-1.5 py-0.5 rounded shrink-0"
-                style={{
-                  color: getDepartmentColor(agent.department),
-                  backgroundColor: getDepartmentColor(agent.department) + '20',
-                }}
-              >
-                {agent.code}
-              </span>
-            )}
-            <span className="truncate">{agentName}</span>
+          <div className="font-semibold text-white text-[15px] truncate">{agentName}</div>
+          <div className="text-xs text-[var(--text-muted)] truncate">
+            {agent.code && <span className="font-mono text-red-400 mr-1.5">{agent.code}</span>}
+            {agent.id}
           </div>
-          <div className="text-xs text-[var(--text-muted)] truncate">{agent.id}</div>
         </div>
 
         {/* Mobile: hamburger for sidebar */}

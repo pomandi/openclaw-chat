@@ -1,6 +1,6 @@
 'use client';
 
-import { Agent, getAgentEmoji, getAgentName, getDepartmentColor } from '@/lib/types';
+import { Agent, getAgentEmoji, getAgentName } from '@/lib/types';
 
 export interface AgentUnreadInfo {
   lastTs: number;
@@ -133,19 +133,8 @@ export default function AgentSidebar({ agents, selectedAgentId, onSelectAgent, o
                 {/* Info — name + last message preview */}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between gap-2">
-                    <div className={`text-sm truncate flex items-center gap-1.5 ${hasUnread ? 'font-bold text-white' : 'font-medium text-white'}`}>
-                      {agent.code && (
-                        <span
-                          className="font-mono text-[10px] px-1 py-0.5 rounded shrink-0"
-                          style={{
-                            color: getDepartmentColor(agent.department),
-                            backgroundColor: getDepartmentColor(agent.department) + '20',
-                          }}
-                        >
-                          {agent.code}
-                        </span>
-                      )}
-                      <span className="truncate">{getAgentName(agent)}</span>
+                    <div className={`text-sm truncate ${hasUnread ? 'font-bold text-white' : 'font-medium text-white'}`}>
+                      {getAgentName(agent)}
                     </div>
                     {/* Timestamp */}
                     {info && (
@@ -154,7 +143,14 @@ export default function AgentSidebar({ agents, selectedAgentId, onSelectAgent, o
                       </span>
                     )}
                   </div>
-                  
+
+                  {/* Agent code (LNN) */}
+                  {agent.code && (
+                    <div className="font-mono text-[10px] text-red-400 mt-0.5">
+                      {agent.code}
+                    </div>
+                  )}
+
                   {/* Last message preview */}
                   {info ? (
                     <div className={`text-xs truncate mt-0.5 ${hasUnread ? 'text-[var(--text-secondary)] font-medium' : 'text-[var(--text-muted)]'}`}>
