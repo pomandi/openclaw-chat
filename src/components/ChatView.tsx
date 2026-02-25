@@ -282,7 +282,7 @@ export default function ChatView({ agent, agents, sessionKey, onOpenSidebar, onB
                       payload.message?.content?.text ||
                       payload.message?.content ||
                       '';
-          setStreamText(prev => prev + text);
+          setStreamText(text);
           setStreaming(true);
         } else if (payload.state === 'final') {
           // Add completed message
