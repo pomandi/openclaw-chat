@@ -7,6 +7,7 @@ const GATEWAY_HTTP_URL = process.env.OPENCLAW_GATEWAY_HTTP_URL || 'http://127.0.
 const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN || '';
 const AGENTS_PATH = process.env.AGENTS_PATH || '/data/agents';
 const OPENCLAW_CONFIG_PATH = process.env.OPENCLAW_CONFIG_PATH || `${AGENTS_PATH}/_config/openclaw.json`;
+const AGENT_REGISTRY_PATH = `${AGENTS_PATH}/_config/agent-registry.json`;
 
 async function gatewayFetch(path: string, options: RequestInit = {}): Promise<Response> {
   const url = `${GATEWAY_HTTP_URL}${path}`;
@@ -22,16 +23,28 @@ async function gatewayFetch(path: string, options: RequestInit = {}): Promise<Re
 }
 
 // Cache for agent list (30 second TTL)
-let agentsCache: { agents: { id: string; name: string }[]; ts: number } | null = null;
+let agentsCache: { agents: { id: string; name: string; code?: string; department?: string }[]; ts: number } | null = null;
 const CACHE_TTL = 30_000;
 
-function readAgentsFromConfig(): { id: string; name: string }[] {
+function readAgentRegistry(): Record<string, { code: string; department: string }> {
+  try {
+    const raw = fs.readFileSync(AGENT_REGISTRY_PATH, 'utf-8');
+    const registry = JSON.parse(raw);
+    return registry?.agents || {};
+  } catch {
+    return {};
+  }
+}
+
+function readAgentsFromConfig(): { id: string; name: string; code?: string; department?: string }[] {
   const raw = fs.readFileSync(OPENCLAW_CONFIG_PATH, 'utf-8');
   const config = JSON.parse(raw);
   const list: { id: string; name?: string }[] = config?.agents?.list || [];
+  const registry = readAgentRegistry();
   return list.map((a) => ({
     id: a.id,
     name: a.name || a.id,
+    ...registry[a.id],
   }));
 }
 

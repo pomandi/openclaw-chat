@@ -1,6 +1,8 @@
 export interface Agent {
   id: string;
   name?: string;
+  code?: string;
+  department?: string;
   identity?: {
     name?: string;
     theme?: string;
@@ -8,6 +10,23 @@ export interface Agent {
     avatar?: string;
     avatarUrl?: string;
   };
+}
+
+// Department color map for LNN badge system
+export const DEPARTMENT_COLORS: Record<string, string> = {
+  C: '#f59e0b', // amber  — Core / Yönetim
+  A: '#06b6d4', // cyan   — Analytics
+  M: '#f97316', // orange — Marketing
+  D: '#8b5cf6', // violet — Dev
+  F: '#22c55e', // green  — Finance
+  S: '#ef4444', // red    — Security
+  H: '#ec4899', // pink   — HR / CRM
+  R: '#3b82f6', // blue   — Research
+  P: '#a78bfa', // purple — Personal / Destek
+};
+
+export function getDepartmentColor(department?: string): string {
+  return (department && DEPARTMENT_COLORS[department]) || '#6b7280';
 }
 
 export interface AgentsListResult {

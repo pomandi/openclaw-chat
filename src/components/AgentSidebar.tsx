@@ -1,6 +1,6 @@
 'use client';
 
-import { Agent, getAgentEmoji, getAgentName } from '@/lib/types';
+import { Agent, getAgentEmoji, getAgentName, getDepartmentColor } from '@/lib/types';
 
 export interface AgentUnreadInfo {
   lastTs: number;
@@ -133,8 +133,19 @@ export default function AgentSidebar({ agents, selectedAgentId, onSelectAgent, o
                 {/* Info — name + last message preview */}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between gap-2">
-                    <div className={`text-sm truncate ${hasUnread ? 'font-bold text-white' : 'font-medium text-white'}`}>
-                      {getAgentName(agent)}
+                    <div className={`text-sm truncate flex items-center gap-1.5 ${hasUnread ? 'font-bold text-white' : 'font-medium text-white'}`}>
+                      {agent.code && (
+                        <span
+                          className="font-mono text-[10px] px-1 py-0.5 rounded shrink-0"
+                          style={{
+                            color: getDepartmentColor(agent.department),
+                            backgroundColor: getDepartmentColor(agent.department) + '20',
+                          }}
+                        >
+                          {agent.code}
+                        </span>
+                      )}
+                      <span className="truncate">{getAgentName(agent)}</span>
                     </div>
                     {/* Timestamp */}
                     {info && (
