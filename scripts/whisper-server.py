@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """
-Lightweight Whisper transcription HTTP server.
-Accepts POST /transcribe with audio file, returns JSON { "text": "..." }
+Lightweight Whisper transcription HTTP server using faster-whisper.
+Accepts POST /transcribe with audio (base64 data URL), returns JSON { "text": "..." }
 Runs on port 18791 on the host machine.
+
+Uses faster-whisper (CTranslate2) for ~5-8x speedup over openai-whisper on CPU.
+Model is loaded once at startup and kept in memory.
 """
 
 import http.server
@@ -11,10 +14,29 @@ import tempfile
 import os
 import subprocess
 import base64
-from urllib.parse import urlparse, parse_qs
+import sys
+import threading
 
 PORT = 18791
 TOKEN = os.environ.get('OPENCLAW_GATEWAY_TOKEN', '')
+MODEL_SIZE = os.environ.get('WHISPER_MODEL', 'tiny')
+COMPUTE_TYPE = os.environ.get('WHISPER_COMPUTE_TYPE', 'int8')
+
+# Global model — loaded once at startup
+_model = None
+_model_lock = threading.Lock()
+
+
+def get_model():
+    global _model
+    if _model is None:
+        from faster_whisper import WhisperModel
+        print(f"[Whisper] Loading faster-whisper model={MODEL_SIZE} compute_type={COMPUTE_TYPE}...",
+              file=sys.stderr, flush=True)
+        _model = WhisperModel(MODEL_SIZE, device="cpu", compute_type=COMPUTE_TYPE)
+        print(f"[Whisper] Model loaded successfully.", file=sys.stderr, flush=True)
+    return _model
+
 
 class TranscriptionHandler(http.server.BaseHTTPRequestHandler):
     def do_OPTIONS(self):
@@ -29,7 +51,13 @@ class TranscriptionHandler(http.server.BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
-            self.wfile.write(json.dumps({"ok": True}).encode())
+            self.wfile.write(json.dumps({
+                "ok": True,
+                "model": MODEL_SIZE,
+                "compute_type": COMPUTE_TYPE,
+                "engine": "faster-whisper",
+                "model_loaded": _model is not None,
+            }).encode())
             return
         self.send_response(404)
         self.end_headers()
@@ -63,12 +91,12 @@ class TranscriptionHandler(http.server.BaseHTTPRequestHandler):
         try:
             data = json.loads(body)
             audio_b64 = data.get('audio', '')
-            language = data.get('language', 'tr')  # Default Turkish
-            
+            language = data.get('language', 'tr')
+
             # Remove data URL prefix if present
             if ',' in audio_b64:
                 audio_b64 = audio_b64.split(',', 1)[1]
-            
+
             audio_bytes = base64.b64decode(audio_b64)
         except Exception as e:
             self.send_response(400)
@@ -77,85 +105,94 @@ class TranscriptionHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({"error": f"Invalid request: {str(e)}"}).encode())
             return
 
-        # Save to temp file
-        with tempfile.NamedTemporaryFile(suffix='.webm', delete=False) as f:
-            f.write(audio_bytes)
-            temp_path = f.name
+        print(f"[Whisper] Received {len(audio_bytes)} bytes, language={language}",
+              file=sys.stderr, flush=True)
 
-        import sys
-        print(f"[Whisper] Received {len(audio_bytes)} bytes, language={language}", file=sys.stderr, flush=True)
+        temp_path = None
+        wav_path = None
 
         try:
-            # Convert to wav first (Whisper works better with wav)
+            # Save to temp file
+            with tempfile.NamedTemporaryFile(suffix='.webm', delete=False) as f:
+                f.write(audio_bytes)
+                temp_path = f.name
+
+            # Convert to wav (faster-whisper/ffmpeg works better with wav)
             wav_path = temp_path.replace('.webm', '.wav')
             ffmpeg_result = subprocess.run(
                 ['ffmpeg', '-i', temp_path, '-ar', '16000', '-ac', '1', '-y', wav_path],
                 capture_output=True, timeout=30
             )
-            print(f"[Whisper] ffmpeg rc={ffmpeg_result.returncode}, wav exists={os.path.exists(wav_path)}", file=sys.stderr, flush=True)
+
             if ffmpeg_result.returncode != 0:
-                print(f"[Whisper] ffmpeg stderr: {ffmpeg_result.stderr.decode()[:300]}", file=sys.stderr, flush=True)
+                stderr_msg = ffmpeg_result.stderr.decode()[:300]
+                print(f"[Whisper] ffmpeg failed (rc={ffmpeg_result.returncode}): {stderr_msg}",
+                      file=sys.stderr, flush=True)
+                self.send_response(400)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "error": "Audio conversion failed",
+                    "text": ""
+                }).encode())
+                return
 
-            # Run Whisper (use full path since systemd may not have ~/.local/bin in PATH)
-            whisper_bin = os.path.expanduser('~/.local/bin/whisper')
-            if not os.path.exists(whisper_bin):
-                whisper_bin = 'whisper'  # fallback to PATH
-            result = subprocess.run(
-                [whisper_bin, wav_path, '--language', language, '--model', 'base',
-                 '--output_format', 'txt', '--output_dir', '/tmp/whisper_out'],
-                capture_output=True, text=True, timeout=60
-            )
-            print(f"[Whisper] whisper rc={result.returncode}", file=sys.stderr, flush=True)
-            if result.stderr:
-                print(f"[Whisper] whisper stderr: {result.stderr[:300]}", file=sys.stderr, flush=True)
+            # Transcribe with faster-whisper (in-memory model, no subprocess)
+            with _model_lock:
+                model = get_model()
+                segments, info = model.transcribe(
+                    wav_path,
+                    language=language,
+                    beam_size=3,
+                    vad_filter=True,  # Skip silence for speed
+                )
+                text = " ".join(segment.text.strip() for segment in segments)
 
-            # Read output
-            txt_path = wav_path.replace('.wav', '.txt').split('/')[-1]
-            txt_full = os.path.join('/tmp/whisper_out', txt_path)
-            
-            print(f"[Whisper] Looking for output: {txt_full}, exists={os.path.exists(txt_full)}", file=sys.stderr, flush=True)
-            
-            if os.path.exists(txt_full):
-                with open(txt_full) as f:
-                    text = f.read().strip()
-                os.unlink(txt_full)
-            else:
-                # Try stderr/stdout for text
-                text = result.stdout.strip() if result.stdout else ''
-                if not text:
-                    text = f"[Transcription failed: {result.stderr[:200]}]"
-            
-            print(f"[Whisper] Result text: '{text[:100]}'", file=sys.stderr, flush=True)
+            detected_lang = info.language
+            lang_prob = info.language_probability
+
+            print(f"[Whisper] Result: lang={detected_lang} (p={lang_prob:.2f}) "
+                  f"text='{text[:100]}'", file=sys.stderr, flush=True)
 
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
-            self.wfile.write(json.dumps({"text": text, "language": language}).encode())
+            self.wfile.write(json.dumps({
+                "text": text,
+                "language": detected_lang,
+                "language_probability": round(lang_prob, 2),
+            }).encode())
 
-        except subprocess.TimeoutExpired:
-            self.send_response(504)
-            self.send_header('Content-Type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps({"error": "Transcription timeout"}).encode())
         except Exception as e:
+            print(f"[Whisper] Error: {e}", file=sys.stderr, flush=True)
             self.send_response(500)
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
-            self.wfile.write(json.dumps({"error": str(e)}).encode())
+            self.wfile.write(json.dumps({"error": str(e), "text": ""}).encode())
+
         finally:
-            # Cleanup
-            for p in [temp_path, temp_path.replace('.webm', '.wav')]:
-                try: os.unlink(p)
-                except: pass
+            # Cleanup temp files
+            for p in [temp_path, wav_path]:
+                if p:
+                    try:
+                        os.unlink(p)
+                    except OSError:
+                        pass
 
     def log_message(self, format, *args):
-        import sys
-        sys.stderr.write("%s - - [%s] %s\n" % (self.client_address[0], self.log_date_time_string(), format%args))
+        sys.stderr.write("%s - - [%s] %s\n" % (
+            self.client_address[0], self.log_date_time_string(), format % args))
         sys.stderr.flush()
 
+
 if __name__ == '__main__':
-    os.makedirs('/tmp/whisper_out', exist_ok=True)
+    # Pre-load model at startup so first request is fast
+    print(f"[Whisper] Starting server on port {PORT}...", file=sys.stderr, flush=True)
+    get_model()
+
     server = http.server.HTTPServer(('0.0.0.0', PORT), TranscriptionHandler)
-    print(f'Whisper transcription server listening on port {PORT}')
+    print(f"[Whisper] Transcription server ready on port {PORT} "
+          f"(model={MODEL_SIZE}, compute={COMPUTE_TYPE})",
+          file=sys.stderr, flush=True)
     server.serve_forever()
