@@ -98,6 +98,12 @@ export default function ChatView({ agent, agents, sessionKey, onOpenSidebar, onB
   const [showTaskPicker, setShowTaskPicker] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
+  // Instruction modal state (shown after agent selection)
+  const [showInstructionModal, setShowInstructionModal] = useState(false);
+  const [forwardInstruction, setForwardInstruction] = useState('');
+  const [selectedTargetAgent, setSelectedTargetAgent] = useState<Agent | null>(null);
+  const instructionInputRef = useRef<HTMLTextAreaElement>(null);
+
   // Pull to refresh state
   const [pullDistance, setPullDistance] = useState(0);
   const [isPulling, setIsPulling] = useState(false);
@@ -227,6 +233,9 @@ export default function ChatView({ agent, agents, sessionKey, onOpenSidebar, onB
     setResolvingTaskId(null);
     setShowAgentPicker(false);
     setShowTaskPicker(false);
+    setShowInstructionModal(false);
+    setSelectedTargetAgent(null);
+    setForwardInstruction('');
   }, [sessionKey]);
 
   // Poll open forward tasks for this agent
@@ -704,9 +713,23 @@ export default function ChatView({ agent, agents, sessionKey, onOpenSidebar, onB
     setShowAgentPicker(true);
   }
 
-  // Forward selected messages to a target agent
-  async function forwardSelectedToAgent(targetAgent: Agent) {
+  // Forward: after agent selection, show instruction modal
+  function onAgentSelected(targetAgent: Agent) {
     setShowAgentPicker(false);
+    setSelectedTargetAgent(targetAgent);
+    const defaultInstruction = forwardMode === 'solve'
+      ? 'Bu durumu çöz. Gerekli aksiyonu net ve uygulanabilir şekilde ver.'
+      : 'Bu durumu açıkla ve net bir çözüm planı çıkar.';
+    setForwardInstruction(defaultInstruction);
+    setShowInstructionModal(true);
+    // Focus the textarea after modal renders
+    setTimeout(() => instructionInputRef.current?.focus(), 100);
+  }
+
+  // Forward selected messages to a target agent (called from instruction modal)
+  async function forwardSelectedToAgent(targetAgent: Agent, customInstruction?: string) {
+    setShowInstructionModal(false);
+    setSelectedTargetAgent(null);
     const selectedMessages = messages
       .filter(m => selectedMessageIds.has(m.id) && (m.role === 'user' || m.role === 'assistant'))
       .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
@@ -717,9 +740,9 @@ export default function ChatView({ agent, agents, sessionKey, onOpenSidebar, onB
     const targetName = getAgentName(targetAgent);
 
     try {
-      const instruction = forwardMode === 'solve'
+      const instruction = customInstruction?.trim() || (forwardMode === 'solve'
         ? 'Bu durumu çöz. Gerekli aksiyonu net ve uygulanabilir şekilde ver.'
-        : 'Bu durumu açıkla ve net bir çözüm planı çıkar.';
+        : 'Bu durumu açıkla ve net bir çözüm planı çıkar.');
 
       const forwardedMsgs = selectedMessages.map(m => ({
         role: m.role,
@@ -1203,7 +1226,7 @@ export default function ChatView({ agent, agents, sessionKey, onOpenSidebar, onB
             {agents.filter(a => a.id !== agent.id).map(a => (
               <button
                 key={a.id}
-                onClick={() => forwardSelectedToAgent(a)}
+                onClick={() => onAgentSelected(a)}
                 className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-[var(--bg-hover)] transition-colors text-left"
               >
                 <span className="text-lg">{getAgentEmoji(a.id, a)}</span>
@@ -1241,6 +1264,93 @@ export default function ChatView({ agent, agents, sessionKey, onOpenSidebar, onB
                 </div>
               </button>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Instruction Modal — shown after agent selection */}
+      {showInstructionModal && selectedTargetAgent && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center" onClick={() => { setShowInstructionModal(false); setSelectedTargetAgent(null); }}>
+          <div className="absolute inset-0 bg-black/40" />
+          <div
+            className="relative w-full sm:w-96 max-h-[80vh] bg-[var(--bg-secondary)] border border-[var(--border)] rounded-t-2xl sm:rounded-2xl shadow-2xl animate-slide-up overflow-hidden"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Modal header */}
+            <div className="flex items-center gap-3 px-4 py-3 border-b border-[var(--border)]">
+              <span className="text-lg">{getAgentEmoji(selectedTargetAgent.id, selectedTargetAgent)}</span>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-semibold text-white truncate">
+                  {forwardMode === 'solve' ? 'Çöz' : 'Açıkla'} → {getAgentName(selectedTargetAgent)}
+                </div>
+                <div className="text-[10px] text-[var(--text-muted)]">
+                  {selectedMessageIds.size} mesaj seçili
+                </div>
+              </div>
+              <button
+                onClick={() => { setShowInstructionModal(false); setSelectedTargetAgent(null); }}
+                className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-[var(--bg-hover)] text-[var(--text-muted)] transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Selected messages preview */}
+            <div className="px-4 py-2 max-h-32 overflow-y-auto border-b border-[var(--border)]/50">
+              {messages
+                .filter(m => selectedMessageIds.has(m.id))
+                .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0))
+                .map((m, idx) => (
+                  <div key={m.id} className="flex items-start gap-2 py-1">
+                    <span className="text-[10px] text-[var(--text-muted)] font-mono shrink-0 mt-0.5">{idx + 1}.</span>
+                    <span className={`text-[10px] font-medium shrink-0 mt-0.5 ${m.role === 'user' ? 'text-blue-400' : 'text-green-400'}`}>
+                      {m.role === 'user' ? 'USER' : 'ASST'}
+                    </span>
+                    <span className="text-xs text-[var(--text-secondary)] line-clamp-2">{m.content || '(empty)'}</span>
+                  </div>
+                ))}
+            </div>
+
+            {/* Instruction input */}
+            <div className="px-4 py-3">
+              <label className="block text-xs text-[var(--text-muted)] font-medium mb-1.5">
+                Talimat (düzenleyebilirsiniz)
+              </label>
+              <textarea
+                ref={instructionInputRef}
+                value={forwardInstruction}
+                onChange={(e) => setForwardInstruction(e.target.value)}
+                placeholder="Ek talimat yazın... Örn: Web search yaparak araştır, bu agente şu özelliği ver..."
+                rows={3}
+                className="w-full px-3 py-2.5 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded-xl text-sm text-white placeholder-[var(--text-muted)] focus:outline-none focus:border-[var(--accent)] transition-colors resize-none leading-snug"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                    e.preventDefault();
+                    forwardSelectedToAgent(selectedTargetAgent, forwardInstruction);
+                  }
+                }}
+              />
+              <div className="text-[10px] text-[var(--text-muted)] mt-1">
+                ⌘+Enter ile hızlı gönder
+              </div>
+            </div>
+
+            {/* Action buttons */}
+            <div className="flex gap-2 px-4 py-3 border-t border-[var(--border)]">
+              <button
+                onClick={() => { setShowInstructionModal(false); setSelectedTargetAgent(null); }}
+                className="flex-1 px-4 py-2.5 rounded-xl bg-[var(--bg-tertiary)] text-[var(--text-secondary)] text-sm font-medium hover:bg-[var(--bg-hover)] transition-colors active:scale-[0.98]"
+              >
+                İptal
+              </button>
+              <button
+                onClick={() => forwardSelectedToAgent(selectedTargetAgent, forwardInstruction)}
+                disabled={forwardingSelection}
+                className="flex-1 px-4 py-2.5 rounded-xl bg-[var(--accent)] text-white text-sm font-semibold hover:bg-[var(--accent-hover)] transition-colors disabled:opacity-50 active:scale-[0.98] shadow-md shadow-[var(--accent)]/20"
+              >
+                {forwardingSelection ? 'Gönderiliyor...' : 'Gönder'}
+              </button>
+            </div>
           </div>
         </div>
       )}
