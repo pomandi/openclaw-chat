@@ -1472,6 +1472,38 @@ export default function ChatView({ agent, agents, sessionKey, onOpenSidebar, onB
   );
 }
 
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  
+  const handleCopy = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {}
+  };
+
+  return (
+    <button
+      onClick={handleCopy}
+      className="p-0.5 rounded opacity-0 group-hover/msg:opacity-60 hover:!opacity-100 text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-all"
+      title={copied ? 'Copied!' : 'Copy message'}
+    >
+      {copied ? (
+        <svg className="w-3 h-3 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+        </svg>
+      ) : (
+        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+        </svg>
+      )}
+    </button>
+  );
+}
+
 function MessageBubble({
   message,
   agentEmoji,
@@ -1510,7 +1542,7 @@ function MessageBubble({
 
   return (
     <div
-      className={`flex gap-2 animate-fade-in ${isUser ? 'flex-row-reverse' : ''} ${selectable ? 'cursor-pointer' : ''}`}
+      className={`group/msg flex gap-2 animate-fade-in ${isUser ? 'flex-row-reverse' : ''} ${selectable ? 'cursor-pointer' : ''}`}
       onClick={() => {
         if (selectable && onToggleSelect) onToggleSelect(message.id);
       }}
@@ -1599,6 +1631,8 @@ function MessageBubble({
               📊 {message.usage.totalTokens >= 1000 ? `${(message.usage.totalTokens / 1000).toFixed(1)}k` : message.usage.totalTokens} tok · ${message.usage.totalCost < 0.01 ? '<$0.01' : `$${message.usage.totalCost.toFixed(2)}`}
             </span>
           )}
+          {/* Copy button */}
+          <CopyButton text={message.content} />
           {isUser && message.status === 'sending' && (
             <svg className="w-3 h-3 text-[var(--text-muted)] animate-spin" viewBox="0 0 24 24">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
