@@ -1488,7 +1488,7 @@ function CopyButton({ text }: { text: string }) {
   return (
     <button
       onClick={handleCopy}
-      className="p-0.5 rounded opacity-0 group-hover/msg:opacity-60 hover:!opacity-100 text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-all"
+      className="p-0.5 rounded opacity-40 hover:opacity-100 text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-all active:scale-90"
       title={copied ? 'Copied!' : 'Copy message'}
     >
       {copied ? (
