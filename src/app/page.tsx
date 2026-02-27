@@ -6,13 +6,14 @@ import AgentSidebar, { AgentUnreadInfo } from '@/components/AgentSidebar';
 import ChatView from '@/components/ChatView';
 import TasksView from '@/components/TasksView';
 import ArenaView from '@/components/ArenaView';
+import NotesView from '@/components/NotesView';
 import { Agent, AgentsListResult } from '@/lib/types';
 
 const LAST_SEEN_KEY = 'openclaw-lastSeen';
 const SELECTED_AGENT_KEY = 'openclaw-selectedAgent';
 const UNREAD_POLL_INTERVAL = 30_000; // 30 seconds
 
-type AppView = 'chat' | 'tasks' | 'arena';
+type AppView = 'chat' | 'tasks' | 'arena' | 'notes';
 
 function loadLastSeen(): Record<string, number> {
   try {
@@ -250,6 +251,10 @@ export default function Home() {
         <div className="flex-1 min-h-0 overflow-hidden">
           <ArenaView />
         </div>
+      ) : activeView === 'notes' ? (
+        <div className="flex-1 min-h-0 overflow-hidden">
+          <NotesView />
+        </div>
       ) : activeView === 'tasks' ? (
         <div className="flex-1 min-h-0 overflow-hidden">
           <TasksView />
@@ -362,6 +367,16 @@ function NavTabs({ activeView, onChangeView, onRefresh, pendingTaskCount = 0 }: 
         }`}
       >
         Arena
+      </button>
+      <button
+        onClick={() => onChangeView('notes')}
+        className={`px-4 py-1.5 text-sm font-medium rounded-lg transition-colors ${
+          activeView === 'notes'
+            ? 'bg-[var(--accent)] text-white'
+            : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]'
+        }`}
+      >
+        Notes
       </button>
       {/* Spacer + Refresh button */}
       <div className="flex-1" />
