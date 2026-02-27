@@ -155,6 +155,10 @@ class GatewayWSClient extends EventEmitter {
     return this.request('chat.abort', { sessionKey, idempotencyKey: this.genId() });
   }
   
+  async sessionUsage(sessionKey: string) {
+    return this.request('sessions.usage', { key: sessionKey }, 15000);
+  }
+  
   private send(data: any) {
     this.ws?.send(JSON.stringify(data));
   }

@@ -300,14 +300,29 @@ export default function ChatView({ agent, agents, sessionKey, onOpenSidebar, onB
             ? content.filter(p => p.type === 'text').map(p => p.text).join('')
             : typeof content === 'string' ? content : String(content || '');
           
+          const msgId = `asst_${Date.now()}_${Math.random()}`;
           if (text?.trim()) {
             setMessages(prev => [...prev, {
-              id: `asst_${Date.now()}_${Math.random()}`,
+              id: msgId,
               role: 'assistant',
               content: text,
               timestamp: Date.now(),
               status: 'sent',
             }]);
+            
+            // Fetch token usage for this session after response
+            if (sessionKey) {
+              fetch(`/api/gateway/usage?sessionKey=${encodeURIComponent(sessionKey)}`)
+                .then(r => r.ok ? r.json() : null)
+                .then(data => {
+                  if (data?.totals) {
+                    setMessages(prev => prev.map(m => 
+                      m.id === msgId ? { ...m, usage: data.totals } : m
+                    ));
+                  }
+                })
+                .catch(() => {}); // Silent fail for usage
+            }
           }
           setStreaming(false);
           setStreamText('');
@@ -1576,9 +1591,14 @@ function MessageBubble({
           </div>
         )}
 
-        {/* Timestamp & status */}
+        {/* Timestamp, status & usage */}
         <div className={`flex items-center gap-1 mt-1 px-1 ${isUser ? 'justify-end' : 'justify-start'}`}>
           <span className="text-[10px] text-[var(--text-muted)]">{timeStr}</span>
+          {!isUser && message.usage && (
+            <span className="text-[10px] text-[var(--text-muted)] opacity-70 ml-1" title={`Input: ${message.usage.input.toLocaleString()} | Output: ${message.usage.output.toLocaleString()} | Cache: ${message.usage.cacheRead.toLocaleString()} | Cost: $${message.usage.totalCost.toFixed(4)}`}>
+              📊 {message.usage.totalTokens >= 1000 ? `${(message.usage.totalTokens / 1000).toFixed(1)}k` : message.usage.totalTokens} tok · ${message.usage.totalCost < 0.01 ? '<$0.01' : `$${message.usage.totalCost.toFixed(2)}`}
+            </span>
+          )}
           {isUser && message.status === 'sending' && (
             <svg className="w-3 h-3 text-[var(--text-muted)] animate-spin" viewBox="0 0 24 24">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />

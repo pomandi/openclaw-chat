@@ -55,6 +55,7 @@ export interface ChatMessage {
   status?: 'sending' | 'sent' | 'error';
   runId?: string;
   attachments?: Attachment[];
+  usage?: { input: number; output: number; cacheRead: number; totalTokens: number; totalCost: number } | null;
 }
 
 export interface ChatEvent {
