@@ -25,6 +25,7 @@ interface ForwardTask {
 }
 import MarkdownRenderer from './MarkdownRenderer';
 import VoiceRecorder, { AudioBubblePlayer } from './VoiceRecorder';
+import VoiceMode from './VoiceMode';
 
 // Helper to extract text from multimodal content
 function extractText(content: any): string {
@@ -85,6 +86,7 @@ export default function ChatView({ agent, agents, sessionKey, onOpenSidebar, onB
   const [retryMessage, setRetryMessage] = useState<ChatMessage | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [voiceMode, setVoiceMode] = useState(false);
+  const [fullVoiceMode, setFullVoiceMode] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedMessageIds, setSelectedMessageIds] = useState<Set<string>>(new Set());
@@ -1450,24 +1452,62 @@ export default function ChatView({ agent, agents, sessionKey, onOpenSidebar, onB
                 )}
               </button>
             ) : (
-              <button
-                type="button"
-                onClick={() => setVoiceMode(true)}
-                disabled={sending}
-                className="flex items-center justify-center w-11 h-11 text-[var(--text-secondary)] hover:text-[var(--accent)] hover:bg-[var(--accent)]/10 rounded-xl transition-colors shrink-0 active:scale-95 disabled:opacity-40"
-                title="Record voice message"
-              >
-                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 10v2a7 7 0 01-14 0v-2" />
-                  <line x1="12" y1="19" x2="12" y2="23" />
-                  <line x1="8" y1="23" x2="16" y2="23" />
-                </svg>
-              </button>
+              <>
+                {/* Voice mode (hands-free) button */}
+                <button
+                  type="button"
+                  onClick={() => setFullVoiceMode(true)}
+                  disabled={sending}
+                  className="flex items-center justify-center w-11 h-11 text-[var(--text-muted)] hover:text-[var(--success)] hover:bg-[var(--success)]/10 rounded-xl transition-colors shrink-0 active:scale-95 disabled:opacity-40"
+                  title="Hands-free voice mode"
+                >
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9.348 14.651a3.75 3.75 0 010-5.303m5.304 0a3.75 3.75 0 010 5.303m-7.425 2.122a6.75 6.75 0 010-9.546m9.546 0a6.75 6.75 0 010 9.546M5.106 18.894c-3.808-3.808-3.808-9.98 0-13.789m13.788 0c3.808 3.808 3.808 9.981 0 13.79M12 12h.008v.007H12V12zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" />
+                  </svg>
+                </button>
+                {/* Voice recording button */}
+                <button
+                  type="button"
+                  onClick={() => setVoiceMode(true)}
+                  disabled={sending}
+                  className="flex items-center justify-center w-11 h-11 text-[var(--text-secondary)] hover:text-[var(--accent)] hover:bg-[var(--accent)]/10 rounded-xl transition-colors shrink-0 active:scale-95 disabled:opacity-40"
+                  title="Record voice message"
+                >
+                  <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 10v2a7 7 0 01-14 0v-2" />
+                    <line x1="12" y1="19" x2="12" y2="23" />
+                    <line x1="8" y1="23" x2="16" y2="23" />
+                  </svg>
+                </button>
+              </>
             )}
           </form>
         )}
       </div>
+
+      {/* Full-screen voice mode overlay */}
+      {fullVoiceMode && (
+        <VoiceMode
+          agent={agent}
+          sessionKey={sessionKey}
+          onClose={() => setFullVoiceMode(false)}
+          onMessageSent={(text) => {
+            // Add user message to chat history
+            setMessages(prev => [...prev, {
+              id: `user_vm_${Date.now()}`,
+              role: 'user',
+              content: text,
+              timestamp: Date.now(),
+              status: 'sent',
+            }]);
+          }}
+          onAgentResponse={(text) => {
+            // Agent response is already handled by the main SSE listener
+            // No need to add here to avoid duplicates
+          }}
+        />
+      )}
     </div>
   );
 }

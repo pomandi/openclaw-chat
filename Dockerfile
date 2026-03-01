@@ -3,7 +3,9 @@ FROM node:22-alpine AS base
 # Install dependencies
 FROM base AS deps
 WORKDIR /app
+RUN apk add --no-cache bash
 COPY package.json package-lock.json ./
+COPY scripts ./scripts
 RUN npm ci
 
 # Build

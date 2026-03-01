@@ -6,12 +6,15 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "postinstall": "bash scripts/copy-vad-assets.sh || true"
   },
   "dependencies": {
+    "@ricky0123/vad-web": "^0.0.30",
     "@simplewebauthn/browser": "^13.2.2",
     "@simplewebauthn/server": "^13.2.2",
     "next": "16.1.6",
+    "onnxruntime-web": "^1.24.2",
     "pg": "^8.18.0",
     "react": "19.2.3",
     "react-dom": "19.2.3",
