@@ -128,7 +128,10 @@ export function useVoiceMode({
   const mountedRef = useRef(true);
   const stateRef = useRef<VoiceModeState>('initializing');
 
-  // Stable refs for callbacks that may change
+  // Stable refs for values/callbacks used inside the SSE/VAD closures
+  const responseModeRef = useRef(responseMode);
+  useEffect(() => { responseModeRef.current = responseMode; }, [responseMode]);
+
   const onMessageSentRef = useRef(onMessageSent);
   const onAgentResponseRef = useRef(onAgentResponse);
   const onCloseRef = useRef(onClose);
@@ -295,11 +298,13 @@ export function useVoiceMode({
           accumulatedRef.current = '';
 
           // Voice mode: play TTS then resume. Text mode: show text, resume after delay.
-          if (text.trim() && responseMode === 'voice') {
+          const mode = responseModeRef.current;
+          console.log('[VoiceMode] Response mode:', mode, '| text length:', text.trim().length);
+          if (text.trim() && mode === 'voice') {
             playTTS(text);
           } else {
             // Text mode or empty: keep response visible, resume listening after brief pause
-            setTimeout(resumeListening, responseMode === 'text' ? 1500 : 0);
+            setTimeout(resumeListening, mode === 'text' ? 1500 : 0);
           }
         } else if (payload.state === 'error' || payload.state === 'aborted') {
           const errMsg = payload.errorMessage || 'Agent error';
