@@ -12,9 +12,12 @@ export type VoiceModeState =
   | 'speaking'
   | 'error';
 
+export type ResponseMode = 'text' | 'voice';
+
 export interface VoiceModeOptions {
   agentId: string;
   sessionKey: string;
+  responseMode: ResponseMode;
   onMessageSent?: (text: string) => void;
   onAgentResponse?: (text: string) => void;
   onClose?: () => void;
@@ -105,6 +108,7 @@ function stripTriggerWords(text: string): string {
 export function useVoiceMode({
   agentId,
   sessionKey,
+  responseMode,
   onMessageSent,
   onAgentResponse,
   onClose,
@@ -290,11 +294,12 @@ export function useVoiceMode({
           setAccumulatedText('');
           accumulatedRef.current = '';
 
-          // Try TTS, fallback to just showing text
-          if (text.trim()) {
+          // Voice mode: play TTS then resume. Text mode: show text, resume after delay.
+          if (text.trim() && responseMode === 'voice') {
             playTTS(text);
           } else {
-            resumeListening();
+            // Text mode or empty: keep response visible, resume listening after brief pause
+            setTimeout(resumeListening, responseMode === 'text' ? 1500 : 0);
           }
         } else if (payload.state === 'error' || payload.state === 'aborted') {
           const errMsg = payload.errorMessage || 'Agent error';

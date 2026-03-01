@@ -86,7 +86,8 @@ export default function ChatView({ agent, agents, sessionKey, onOpenSidebar, onB
   const [retryMessage, setRetryMessage] = useState<ChatMessage | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [voiceMode, setVoiceMode] = useState(false);
-  const [fullVoiceMode, setFullVoiceMode] = useState(false);
+  const [fullVoiceMode, setFullVoiceMode] = useState<'text' | 'voice' | null>(null);
+  const [showVoiceModePicker, setShowVoiceModePicker] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedMessageIds, setSelectedMessageIds] = useState<Set<string>>(new Set());
@@ -1456,7 +1457,7 @@ export default function ChatView({ agent, agents, sessionKey, onOpenSidebar, onB
                 {/* Voice mode (hands-free) button */}
                 <button
                   type="button"
-                  onClick={() => setFullVoiceMode(true)}
+                  onClick={() => setShowVoiceModePicker(true)}
                   disabled={sending}
                   className="flex items-center justify-center w-11 h-11 text-[var(--text-muted)] hover:text-[var(--success)] hover:bg-[var(--success)]/10 rounded-xl transition-colors shrink-0 active:scale-95 disabled:opacity-40"
                   title="Hands-free voice mode"
@@ -1486,14 +1487,60 @@ export default function ChatView({ agent, agents, sessionKey, onOpenSidebar, onB
         )}
       </div>
 
+      {/* Voice mode picker */}
+      {showVoiceModePicker && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 animate-fade-in" onClick={() => setShowVoiceModePicker(false)}>
+          <div className="bg-[var(--bg-secondary)] rounded-2xl p-5 mx-4 max-w-sm w-full border border-[var(--border)] animate-slide-up" onClick={e => e.stopPropagation()}>
+            <h3 className="text-base font-medium text-[var(--text-primary)] text-center mb-4">Voice Mode</h3>
+            <div className="flex flex-col gap-3">
+              <button
+                onClick={() => { setShowVoiceModePicker(false); setFullVoiceMode('text'); }}
+                className="flex items-center gap-4 p-4 rounded-xl bg-[var(--bg-tertiary)] hover:bg-[var(--bg-hover)] border border-[var(--border)] transition-colors active:scale-[0.98]"
+              >
+                <div className="w-11 h-11 rounded-full bg-[var(--accent)]/15 flex items-center justify-center shrink-0">
+                  <svg className="w-5 h-5 text-[var(--accent)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 10v2a7 7 0 01-14 0v-2" />
+                  </svg>
+                </div>
+                <div className="text-left">
+                  <div className="text-sm font-medium text-[var(--text-primary)]">Voice &rarr; Text</div>
+                  <div className="text-xs text-[var(--text-muted)]">Speak, get text reply</div>
+                </div>
+              </button>
+              <button
+                onClick={() => { setShowVoiceModePicker(false); setFullVoiceMode('voice'); }}
+                className="flex items-center gap-4 p-4 rounded-xl bg-[var(--bg-tertiary)] hover:bg-[var(--bg-hover)] border border-[var(--border)] transition-colors active:scale-[0.98]"
+              >
+                <div className="w-11 h-11 rounded-full bg-[var(--success)]/15 flex items-center justify-center shrink-0">
+                  <svg className="w-5 h-5 text-[var(--success)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                  </svg>
+                </div>
+                <div className="text-left">
+                  <div className="text-sm font-medium text-[var(--text-primary)]">Voice &rarr; Voice</div>
+                  <div className="text-xs text-[var(--text-muted)]">Full conversation, speak and listen</div>
+                </div>
+              </button>
+            </div>
+            <button
+              onClick={() => setShowVoiceModePicker(false)}
+              className="w-full mt-3 py-2.5 text-sm text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Full-screen voice mode overlay */}
       {fullVoiceMode && (
         <VoiceMode
           agent={agent}
           sessionKey={sessionKey}
-          onClose={() => setFullVoiceMode(false)}
+          responseMode={fullVoiceMode}
+          onClose={() => setFullVoiceMode(null)}
           onMessageSent={(text) => {
-            // Add user message to chat history
             setMessages(prev => [...prev, {
               id: `user_vm_${Date.now()}`,
               role: 'user',
@@ -1501,10 +1548,6 @@ export default function ChatView({ agent, agents, sessionKey, onOpenSidebar, onB
               timestamp: Date.now(),
               status: 'sent',
             }]);
-          }}
-          onAgentResponse={(text) => {
-            // Agent response is already handled by the main SSE listener
-            // No need to add here to avoid duplicates
           }}
         />
       )}

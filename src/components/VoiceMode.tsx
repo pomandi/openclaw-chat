@@ -1,12 +1,13 @@
 'use client';
 
 import { useCallback } from 'react';
-import { useVoiceMode, VoiceModeState } from '@/lib/useVoiceMode';
+import { useVoiceMode, VoiceModeState, ResponseMode } from '@/lib/useVoiceMode';
 import { Agent, getAgentEmoji, getAgentName } from '@/lib/types';
 
 interface VoiceModeProps {
   agent: Agent;
   sessionKey: string;
+  responseMode: ResponseMode;
   onClose: () => void;
   onMessageSent?: (text: string) => void;
   onAgentResponse?: (text: string) => void;
@@ -25,6 +26,7 @@ const STATE_LABELS: Record<VoiceModeState, string> = {
 export default function VoiceMode({
   agent,
   sessionKey,
+  responseMode,
   onClose,
   onMessageSent,
   onAgentResponse,
@@ -48,6 +50,7 @@ export default function VoiceMode({
   } = useVoiceMode({
     agentId: agent.id,
     sessionKey,
+    responseMode,
     onMessageSent,
     onAgentResponse,
     onClose: handleClose,
@@ -95,8 +98,11 @@ export default function VoiceMode({
           </svg>
         </button>
 
-        <div className="text-sm text-[var(--text-secondary)]">
-          {agentName}
+        <div className="text-center">
+          <div className="text-sm text-[var(--text-secondary)]">{agentName}</div>
+          <div className="text-[10px] text-[var(--text-muted)]">
+            {responseMode === 'voice' ? 'Voice \u2194 Voice' : 'Voice \u2192 Text'}
+          </div>
         </div>
 
         <div className="text-xs text-[var(--text-muted)] min-w-[80px] text-right">
