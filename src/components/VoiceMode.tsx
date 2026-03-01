@@ -42,6 +42,7 @@ export default function VoiceMode({
     accumulatedText,
     agentResponse,
     speechProbability,
+    lastTranscript,
     retry,
     close,
   } = useVoiceMode({
@@ -65,7 +66,9 @@ export default function VoiceMode({
       ? 0.2
       : state === 'speaking'
         ? 0.4
-        : 0;
+        : state === 'thinking'
+          ? 0.3
+          : 0;
 
   // Ring color based on state
   const ringColor = state === 'recording'
@@ -101,10 +104,13 @@ export default function VoiceMode({
         </div>
       </div>
 
-      {/* Main content */}
-      <div className="flex-1 flex flex-col items-center justify-center gap-8 px-6">
+      {/* Main content — scrollable */}
+      <div className="flex-1 flex flex-col items-center gap-6 px-6 overflow-y-auto">
+        {/* Spacer to push content toward center */}
+        <div className="flex-1 min-h-8" />
+
         {/* Agent avatar with pulse ring */}
-        <div className="relative">
+        <div className="relative shrink-0">
           {/* Outer pulse ring */}
           <div
             className={`absolute inset-0 rounded-full transition-all duration-300 ${
@@ -127,7 +133,7 @@ export default function VoiceMode({
           />
           {/* Avatar circle */}
           <div
-            className="relative w-28 h-28 rounded-full flex items-center justify-center text-5xl border-2 transition-colors duration-300"
+            className="relative w-24 h-24 rounded-full flex items-center justify-center text-4xl border-2 transition-colors duration-300"
             style={{
               backgroundColor: 'var(--bg-tertiary)',
               borderColor: ringColor,
@@ -137,42 +143,11 @@ export default function VoiceMode({
           </div>
         </div>
 
-        {/* Accumulated user text */}
-        {accumulatedText && state !== 'thinking' && state !== 'speaking' && (
-          <div className="w-full max-w-md">
-            <div className="text-xs text-[var(--text-muted)] mb-1 text-center">Your message:</div>
-            <div className="bg-[var(--bubble-user)] text-white px-4 py-3 rounded-2xl text-[15px] leading-relaxed max-h-32 overflow-y-auto text-center">
-              {accumulatedText}
-            </div>
-            <div className="text-xs text-[var(--text-muted)] mt-2 text-center">
-              Say &quot;gönder&quot; to send, or keep talking to add more
-            </div>
-          </div>
-        )}
-
-        {/* Sent message */}
-        {accumulatedText && (state === 'thinking' || state === 'speaking') && (
-          <div className="w-full max-w-md">
-            <div className="bg-[var(--bubble-user)] text-white px-4 py-3 rounded-2xl text-[15px] leading-relaxed max-h-24 overflow-y-auto text-center opacity-60">
-              {accumulatedText}
-            </div>
-          </div>
-        )}
-
-        {/* Agent response */}
-        {agentResponse && (
-          <div className="w-full max-w-md">
-            <div className="bg-[var(--bubble-assistant)] text-[var(--text-primary)] px-4 py-3 rounded-2xl text-[15px] leading-relaxed max-h-48 overflow-y-auto">
-              {agentResponse}
-            </div>
-          </div>
-        )}
-
-        {/* Status area */}
-        <div className="flex flex-col items-center gap-2">
+        {/* Status indicator */}
+        <div className="flex flex-col items-center gap-1 shrink-0">
           {state === 'initializing' && (
             <div className="flex items-center gap-2 text-[var(--text-muted)]">
-              <svg className="w-5 h-5 animate-spin" viewBox="0 0 24 24" fill="none">
+              <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
               </svg>
@@ -182,7 +157,7 @@ export default function VoiceMode({
 
           {state === 'listening' && (
             <div className="flex items-center gap-2 text-[var(--accent)]">
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z" />
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19 10v2a7 7 0 01-14 0v-2" />
               </svg>
@@ -199,7 +174,7 @@ export default function VoiceMode({
 
           {state === 'transcribing' && (
             <div className="flex items-center gap-2 text-[var(--text-secondary)]">
-              <svg className="w-5 h-5 animate-spin" viewBox="0 0 24 24" fill="none">
+              <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
               </svg>
@@ -220,7 +195,7 @@ export default function VoiceMode({
 
           {state === 'speaking' && (
             <div className="flex items-center gap-2 text-[var(--success)]">
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
               </svg>
               <span className="text-sm">Speaking...</span>
@@ -230,7 +205,7 @@ export default function VoiceMode({
           {state === 'error' && (
             <div className="flex flex-col items-center gap-3">
               <div className="flex items-center gap-2 text-[var(--error)]">
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
                 <span className="text-sm">{error || 'Something went wrong'}</span>
@@ -244,12 +219,50 @@ export default function VoiceMode({
             </div>
           )}
         </div>
+
+        {/* Last transcript (debug/feedback) */}
+        {lastTranscript && state !== 'thinking' && state !== 'speaking' && (
+          <div className="text-xs text-[var(--text-muted)] text-center italic max-w-sm">
+            &ldquo;{lastTranscript}&rdquo;
+          </div>
+        )}
+
+        {/* Accumulated user text */}
+        {accumulatedText && (
+          <div className="w-full max-w-md shrink-0">
+            {state !== 'thinking' && state !== 'speaking' && (
+              <div className="text-xs text-[var(--text-muted)] mb-1 text-center">Your message:</div>
+            )}
+            <div className={`bg-[var(--bubble-user)] text-white px-4 py-3 rounded-2xl text-[15px] leading-relaxed max-h-32 overflow-y-auto text-center ${
+              state === 'thinking' || state === 'speaking' ? 'opacity-50' : ''
+            }`}>
+              {accumulatedText}
+            </div>
+            {state !== 'thinking' && state !== 'speaking' && (
+              <div className="text-xs text-[var(--text-muted)] mt-2 text-center">
+                Say &quot;g&ouml;nder&quot; to send
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Agent response */}
+        {agentResponse && (
+          <div className="w-full max-w-md shrink-0">
+            <div className="bg-[var(--bubble-assistant)] text-[var(--text-primary)] px-4 py-3 rounded-2xl text-[15px] leading-relaxed max-h-48 overflow-y-auto">
+              {agentResponse}
+            </div>
+          </div>
+        )}
+
+        {/* Spacer bottom */}
+        <div className="flex-1 min-h-4" />
       </div>
 
       {/* Footer hint */}
-      <div className="px-6 py-4 text-center">
+      <div className="px-6 py-3 text-center shrink-0">
         <p className="text-xs text-[var(--text-muted)]">
-          Say &quot;gönder&quot; to send &middot; &quot;kapat&quot; to close
+          &quot;g&ouml;nder&quot; = send &middot; &quot;kapat&quot; = close
         </p>
       </div>
     </div>
