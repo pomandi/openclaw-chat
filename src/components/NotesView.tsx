@@ -50,15 +50,20 @@ export default function NotesView() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState({ title: '', content: '', url: '', color: 'default' });
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const fetchNotes = useCallback(async () => {
     try {
-      const res = await fetch('/api/notes');
+      const res = await fetch('/api/notes', { credentials: 'same-origin' });
       if (res.ok) {
         const data = await res.json();
         setNotes(data.notes || []);
+      } else {
+        console.error('[Notes] fetch failed:', res.status);
       }
-    } catch {}
+    } catch (err) {
+      console.error('[Notes] fetch error:', err);
+    }
     setLoading(false);
   }, []);
 
@@ -67,53 +72,68 @@ export default function NotesView() {
   const handleSave = async () => {
     if (!form.title.trim() && !form.content.trim() && !form.url.trim()) return;
     setSaving(true);
+    setError(null);
 
     try {
-      if (editingId) {
-        await fetch(`/api/notes/${editingId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            title: form.title,
-            content: form.content,
-            url: form.url || null,
-            color: form.color,
-            note_type: form.url ? 'link' : 'text',
-          }),
-        });
-      } else {
-        await fetch('/api/notes', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            title: form.title,
-            content: form.content,
-            url: form.url || null,
-            color: form.color,
-            note_type: form.url ? 'link' : 'text',
-          }),
-        });
+      const payload = {
+        title: form.title,
+        content: form.content,
+        url: form.url || null,
+        color: form.color,
+        note_type: form.url ? 'link' : 'text',
+      };
+
+      const res = editingId
+        ? await fetch(`/api/notes/${editingId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify(payload),
+          })
+        : await fetch('/api/notes', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify(payload),
+          });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `Save failed (${res.status})`);
       }
+
       setForm({ title: '', content: '', url: '', color: 'default' });
       setShowAdd(false);
       setEditingId(null);
       fetchNotes();
-    } catch {}
+    } catch (err: any) {
+      console.error('[Notes] save error:', err);
+      setError(err.message || 'Failed to save note');
+    }
     setSaving(false);
   };
 
   const handleDelete = async (id: number) => {
     if (!confirm('Delete this note?')) return;
-    await fetch(`/api/notes/${id}`, { method: 'DELETE' });
+    try {
+      await fetch(`/api/notes/${id}`, { method: 'DELETE', credentials: 'same-origin' });
+    } catch (err) {
+      console.error('[Notes] delete error:', err);
+    }
     fetchNotes();
   };
 
   const handlePin = async (note: Note) => {
-    await fetch(`/api/notes/${note.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pinned: !note.pinned }),
-    });
+    try {
+      await fetch(`/api/notes/${note.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ pinned: !note.pinned }),
+      });
+    } catch (err) {
+      console.error('[Notes] pin error:', err);
+    }
     fetchNotes();
   };
 
@@ -186,6 +206,11 @@ export default function NotesView() {
               />
             ))}
           </div>
+          {error && (
+            <div className="px-3 py-2 text-sm text-red-400 bg-red-500/10 border border-red-500/30 rounded-lg">
+              ⚠️ {error}
+            </div>
+          )}
           <div className="flex gap-2 justify-end">
             <button
               onClick={cancelEdit}
