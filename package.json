@@ -14,6 +14,7 @@
     "@simplewebauthn/browser": "^13.2.2",
     "@simplewebauthn/server": "^13.2.2",
     "next": "16.1.6",
+    "node-edge-tts": "^1.2.10",
     "onnxruntime-web": "^1.24.2",
     "pg": "^8.18.0",
     "react": "19.2.3",

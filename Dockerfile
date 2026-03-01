@@ -43,6 +43,16 @@ COPY --from=builder /app/node_modules/minimist ./node_modules/minimist
 COPY --from=builder /app/node_modules/inherits ./node_modules/inherits
 COPY --from=builder /app/node_modules/safer-buffer ./node_modules/safer-buffer
 
+# Copy Edge TTS dependencies (for voice mode)
+COPY --from=builder /app/node_modules/node-edge-tts ./node_modules/node-edge-tts
+RUN --mount=from=builder,source=/app/node_modules,target=/tmp/nm \
+    for pkg in https-proxy-agent agent-base debug ms yargs yargs-parser cliui \
+               escalade get-caller-file require-directory y18n string-width \
+               strip-ansi ansi-regex ansi-styles wrap-ansi color-convert \
+               color-name emoji-regex is-fullwidth-code-point; do \
+      if [ -d "/tmp/nm/$pkg" ]; then cp -r "/tmp/nm/$pkg" "./node_modules/$pkg"; fi; \
+    done
+
 # Copy PostgreSQL dependencies (use shell to copy only existing dirs)
 RUN --mount=from=builder,source=/app/node_modules,target=/tmp/nm \
     for pkg in pg pg-types pg-pool pg-protocol pg-connection-string pgpass pg-int8 pg-cloudflare \

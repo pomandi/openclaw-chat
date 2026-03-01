@@ -1,16 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { isAuthenticatedFromRequest } from '@/lib/auth';
-import { getGatewayWS } from '@/lib/gateway-ws';
-import { readFile } from 'fs/promises';
+import { readFile, unlink } from 'fs/promises';
+import { tmpdir } from 'os';
+import { join } from 'path';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
-// POST /api/gateway/tts — convert text to speech via gateway Edge TTS
+// POST /api/gateway/tts — convert text to speech using Edge TTS directly
 export async function POST(req: NextRequest) {
   if (!isAuthenticatedFromRequest(req)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+
+  const tmpFile = join(tmpdir(), `tts-${Date.now()}-${Math.random().toString(36).slice(2)}.mp3`);
 
   try {
     const { text } = await req.json();
@@ -19,35 +22,31 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'text required' }, { status: 400 });
     }
 
-    const gw = getGatewayWS();
+    // Use edge-tts directly — no gateway dependency, no volume mount needed
+    const { EdgeTTS } = await import('node-edge-tts');
+    const tts = new EdgeTTS({
+      voice: 'tr-TR-EmelNeural',
+      outputFormat: 'audio-24khz-96kbitrate-mono-mp3',
+    });
 
-    // Request TTS conversion from gateway
-    const result = await gw.request('tts.convert', { text: text.trim() }, 25000);
+    await tts.ttsPromise(text.trim(), tmpFile);
 
-    if (!result?.audioPath) {
-      return NextResponse.json({ error: 'TTS conversion failed' }, { status: 502 });
-    }
+    const audioBuffer = await readFile(tmpFile);
 
-    // Read the audio file from the shared volume mount
-    // Gateway writes to /tmp/openclaw/tts-*/ which is mounted in the container
-    const audioBuffer = await readFile(result.audioPath);
-
-    // Determine content type from extension
-    const ext = result.audioPath.split('.').pop()?.toLowerCase();
-    const contentType = ext === 'mp3' ? 'audio/mpeg'
-      : ext === 'wav' ? 'audio/wav'
-      : ext === 'ogg' ? 'audio/ogg'
-      : 'audio/mpeg';
+    // Clean up temp file (fire-and-forget)
+    unlink(tmpFile).catch(() => {});
 
     return new Response(audioBuffer, {
       headers: {
-        'Content-Type': contentType,
+        'Content-Type': 'audio/mpeg',
         'Content-Length': String(audioBuffer.length),
         'Cache-Control': 'no-cache',
       },
     });
   } catch (err: any) {
     console.error('[TTS] Error:', err.message);
+    // Clean up on error
+    unlink(tmpFile).catch(() => {});
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }
