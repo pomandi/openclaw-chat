@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { loadVoiceSettings, type VoiceSettings } from './voiceSettings';
 
 // Types
 export type VoiceModeState =
@@ -33,6 +34,7 @@ export interface VoiceModeReturn {
   manualSend: () => void;
   retry: () => void;
   close: () => void;
+  reloadSettings: () => void;
 }
 
 // Convert Float32Array (16kHz mono) to WAV data URL
@@ -102,9 +104,6 @@ function stripTriggerWords(text: string): string {
   result = result.replace(/\bsend\b/gi, '');
   return result.replace(/[.,!?]+$/, '').trim();
 }
-
-// Auto-send after this many ms of silence when there's accumulated text
-const AUTO_SEND_DELAY_MS = 4000;
 
 // --- Ambient background music (Web Audio API) ---
 // Generates a soft warm pad under TTS playback — zero latency, no file needed
@@ -200,6 +199,7 @@ export function useVoiceMode({
   const autoSendTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const ambientRef = useRef<{ gain: GainNode; stop: () => void } | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
+  const settingsRef = useRef<VoiceSettings>(loadVoiceSettings());
 
   // Stable refs for values/callbacks used inside the SSE/VAD closures
   const responseModeRef = useRef(responseMode);
@@ -258,6 +258,7 @@ export function useVoiceMode({
 
   // Start ambient background music
   const startAmbient = useCallback(() => {
+    if (!settingsRef.current.ambientEnabled) return;
     try {
       if (!audioCtxRef.current) {
         audioCtxRef.current = new AudioContext();
@@ -273,7 +274,7 @@ export function useVoiceMode({
 
       const pad = createAmbientPad(ctx);
       ambientRef.current = pad;
-      fadeIn(pad.gain, 0.08, 1.5); // Gentle fade in over 1.5s, very low volume
+      fadeIn(pad.gain, settingsRef.current.ambientVolume, 1.5);
     } catch (e) {
       console.warn('[VoiceMode] Ambient start error:', e);
     }
@@ -300,10 +301,16 @@ export function useVoiceMode({
     startAmbient();
 
     try {
+      const s = settingsRef.current;
       const res = await fetch('/api/gateway/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({
+          text,
+          voice: s.voice,
+          rate: s.rate,
+          pitch: s.pitch,
+        }),
         signal: AbortSignal.timeout(20000),
       });
 
@@ -381,6 +388,7 @@ export function useVoiceMode({
   // Start auto-send timer (resets on each call)
   const startAutoSend = useCallback(() => {
     clearAutoSend();
+    const delayMs = settingsRef.current.autoSendDelay * 1000;
     autoSendTimerRef.current = setTimeout(() => {
       const text = accumulatedRef.current;
       if (text.trim() && mountedRef.current && stateRef.current === 'listening') {
@@ -388,7 +396,7 @@ export function useVoiceMode({
         setAccumulatedText(text);
         sendToAgentRef.current(text);
       }
-    }, AUTO_SEND_DELAY_MS);
+    }, delayMs);
   }, [clearAutoSend]);
 
   // Manual send — exposed to UI
@@ -596,13 +604,14 @@ export function useVoiceMode({
 
               // Start auto-send timer — will fire if no more speech in N seconds
               if (autoSendTimerRef.current) clearTimeout(autoSendTimerRef.current);
+              const delayMs = settingsRef.current.autoSendDelay * 1000;
               autoSendTimerRef.current = setTimeout(() => {
                 const accum = accumulatedRef.current;
                 if (accum.trim() && mountedRef.current && stateRef.current === 'listening') {
                   console.log('[VoiceMode] Auto-send after silence:', accum);
                   sendToAgentRef.current(accum);
                 }
-              }, AUTO_SEND_DELAY_MS);
+              }, delayMs);
             }
           },
 
@@ -728,6 +737,11 @@ export function useVoiceMode({
     })();
   }, [clearAutoSend]);
 
+  const reloadSettings = useCallback(() => {
+    settingsRef.current = loadVoiceSettings();
+    console.log('[VoiceMode] Settings reloaded:', settingsRef.current);
+  }, []);
+
   const close = useCallback(() => {
     clearAutoSend();
     if (audioRef.current) {
@@ -748,5 +762,6 @@ export function useVoiceMode({
     manualSend,
     retry,
     close,
+    reloadSettings,
   };
 }

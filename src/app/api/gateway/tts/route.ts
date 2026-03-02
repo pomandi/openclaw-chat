@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
   const tmpFile = join(tmpdir(), `tts-${Date.now()}-${Math.random().toString(36).slice(2)}.mp3`);
 
   try {
-    const { text } = await req.json();
+    const { text, voice, rate, pitch } = await req.json();
 
     if (!text || typeof text !== 'string' || !text.trim()) {
       return NextResponse.json({ error: 'text required' }, { status: 400 });
@@ -55,11 +55,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'no speakable text' }, { status: 400 });
     }
 
+    const ttsVoice = voice ?? 'tr-TR-EmelNeural';
+    const ttsRate = `${rate ?? -8}%`;
+    const ttsPitch = `${pitch ?? -2}Hz`;
+
     const { EdgeTTS } = await import('node-edge-tts');
     const tts = new EdgeTTS({
-      voice: 'tr-TR-EmelNeural',
-      rate: '-8%',       // Slightly slower — more natural, less rushed
-      pitch: '-2Hz',     // Slightly lower pitch — warmer tone
+      voice: ttsVoice,
+      rate: ttsRate,
+      pitch: ttsPitch,
       volume: '+0%',
       outputFormat: 'audio-24khz-96kbitrate-mono-mp3',
     });
