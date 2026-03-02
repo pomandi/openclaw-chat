@@ -1,9 +1,11 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useVoiceMode, VoiceModeState, ResponseMode } from '@/lib/useVoiceMode';
-import { Agent, getAgentEmoji, getAgentName } from '@/lib/types';
+import { Agent, getAgentName } from '@/lib/types';
 import VoiceSettings from './VoiceSettings';
+import TalkingHead from './TalkingHead';
+import type { HeadState } from './TalkingHead';
 import type { VoiceSettings as VoiceSettingsType } from '@/lib/voiceSettings';
 
 interface VoiceModeProps {
@@ -25,6 +27,17 @@ const STATE_LABELS: Record<VoiceModeState, string> = {
   error: 'Error',
 };
 
+function toHeadState(s: VoiceModeState): HeadState {
+  switch (s) {
+    case 'listening': return 'listening';
+    case 'recording': return 'recording';
+    case 'thinking':
+    case 'transcribing': return 'thinking';
+    case 'speaking': return 'speaking';
+    default: return 'idle';
+  }
+}
+
 export default function VoiceMode({
   agent,
   sessionKey,
@@ -34,8 +47,9 @@ export default function VoiceMode({
   onAgentResponse,
 }: VoiceModeProps) {
   const [showSettings, setShowSettings] = useState(false);
-  const agentEmoji = getAgentEmoji(agent.id, agent);
+  const [mouthOpenness, setMouthOpenness] = useState(0);
   const agentName = getAgentName(agent);
+  const rafRef = useRef<number>(0);
 
   const handleClose = useCallback(() => {
     onClose();
@@ -52,6 +66,7 @@ export default function VoiceMode({
     retry,
     close,
     reloadSettings,
+    getAudioLevel,
   } = useVoiceMode({
     agentId: agent.id,
     sessionKey,
@@ -60,6 +75,17 @@ export default function VoiceMode({
     onAgentResponse,
     onClose: handleClose,
   });
+
+  // rAF loop for lip-sync
+  useEffect(() => {
+    function tick() {
+      const level = getAudioLevel();
+      setMouthOpenness(level);
+      rafRef.current = requestAnimationFrame(tick);
+    }
+    rafRef.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [getAudioLevel]);
 
   // Pulse scale based on speech probability and state
   const pulseScale = state === 'recording'
@@ -139,7 +165,7 @@ export default function VoiceMode({
         {/* Spacer to push content toward center */}
         <div className="flex-1 min-h-8" />
 
-        {/* Agent avatar with pulse ring */}
+        {/* Avatar with pulse ring */}
         <div className="relative shrink-0">
           {/* Outer pulse ring */}
           <div
@@ -161,15 +187,17 @@ export default function VoiceMode({
               backgroundColor: ringColor,
             }}
           />
-          {/* Avatar circle */}
+          {/* Talking Head avatar */}
           <div
-            className="relative w-24 h-24 rounded-full flex items-center justify-center text-4xl border-2 transition-colors duration-300"
-            style={{
-              backgroundColor: 'var(--bg-tertiary)',
-              borderColor: ringColor,
-            }}
+            className="relative w-24 h-24 rounded-full flex items-center justify-center border-2 transition-colors duration-300 overflow-hidden"
+            style={{ borderColor: ringColor }}
           >
-            {agentEmoji}
+            <TalkingHead
+              state={toHeadState(state)}
+              mouthOpenness={mouthOpenness}
+              size={96}
+              accentColor={ringColor}
+            />
           </div>
         </div>
 

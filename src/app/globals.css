@@ -213,3 +213,33 @@ textarea {
 .voice-ripple {
   animation: voiceRipple 1.5s ease-out infinite;
 }
+
+/* Talking Head animations */
+@keyframes headBreathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.02); }
+}
+
+@keyframes headBob {
+  0%, 100% { transform: translateY(0); }
+  25% { transform: translateY(-2px); }
+  75% { transform: translateY(2px); }
+}
+
+@keyframes headThink {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-2px); }
+  75% { transform: translateX(2px); }
+}
+
+.head-breathe {
+  animation: headBreathe 3s ease-in-out infinite;
+}
+
+.head-bob {
+  animation: headBob 0.6s ease-in-out infinite;
+}
+
+.head-think {
+  animation: headThink 2s ease-in-out infinite;
+}

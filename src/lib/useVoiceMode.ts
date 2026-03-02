@@ -35,6 +35,7 @@ export interface VoiceModeReturn {
   retry: () => void;
   close: () => void;
   reloadSettings: () => void;
+  getAudioLevel: () => number;
 }
 
 // Convert Float32Array (16kHz mono) to WAV data URL
@@ -198,7 +199,10 @@ export function useVoiceMode({
   const stateRef = useRef<VoiceModeState>('initializing');
   const autoSendTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const ambientRef = useRef<{ gain: GainNode; stop: () => void } | null>(null);
+  const customMusicRef = useRef<HTMLAudioElement | null>(null);
+  const customMusicGainRef = useRef<GainNode | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
   const settingsRef = useRef<VoiceSettings>(loadVoiceSettings());
 
   // Stable refs for values/callbacks used inside the SSE/VAD closures
@@ -224,6 +228,21 @@ export function useVoiceMode({
       clearTimeout(autoSendTimerRef.current);
       autoSendTimerRef.current = null;
     }
+  }, []);
+
+  // Get audio level from analyser (0-1) for lip-sync
+  const getAudioLevel = useCallback((): number => {
+    const analyser = analyserRef.current;
+    if (!analyser) return 0;
+    const data = new Uint8Array(analyser.frequencyBinCount);
+    analyser.getByteTimeDomainData(data);
+    let sum = 0;
+    for (let i = 0; i < data.length; i++) {
+      const v = (data[i] - 128) / 128;
+      sum += v * v;
+    }
+    const rms = Math.sqrt(sum / data.length);
+    return Math.min(1, rms * 4); // Scale up for more visible mouth movement
   }, []);
 
   // Transcribe audio segment
@@ -256,16 +275,23 @@ export function useVoiceMode({
     vadRef.current?.start().catch(() => {});
   }, [setStateSync]);
 
+  // Ensure AudioContext exists
+  const ensureAudioCtx = useCallback((): AudioContext => {
+    if (!audioCtxRef.current) {
+      audioCtxRef.current = new AudioContext();
+    }
+    const ctx = audioCtxRef.current;
+    if (ctx.state === 'suspended') ctx.resume();
+    return ctx;
+  }, []);
+
   // Start ambient background music
   const startAmbient = useCallback(() => {
     if (!settingsRef.current.ambientEnabled) return;
-    try {
-      if (!audioCtxRef.current) {
-        audioCtxRef.current = new AudioContext();
-      }
-      const ctx = audioCtxRef.current;
-      if (ctx.state === 'suspended') ctx.resume();
+    const ctx = ensureAudioCtx();
+    const source = settingsRef.current.ambientSource;
 
+    if (source === 'default') {
       // Stop previous if any
       if (ambientRef.current) {
         ambientRef.current.stop();
@@ -275,17 +301,51 @@ export function useVoiceMode({
       const pad = createAmbientPad(ctx);
       ambientRef.current = pad;
       fadeIn(pad.gain, settingsRef.current.ambientVolume, 1.5);
-    } catch (e) {
-      console.warn('[VoiceMode] Ambient start error:', e);
+    } else {
+      // Custom music from R2
+      if (customMusicRef.current) {
+        customMusicRef.current.pause();
+        customMusicRef.current = null;
+      }
+
+      const key = source.replace(/^music\//, '');
+      const audio = new Audio(`/api/music/${encodeURIComponent(key)}`);
+      audio.loop = true;
+      audio.crossOrigin = 'anonymous';
+      customMusicRef.current = audio;
+
+      try {
+        const mediaSource = ctx.createMediaElementSource(audio);
+        const gainNode = ctx.createGain();
+        gainNode.gain.value = 0;
+        mediaSource.connect(gainNode);
+        gainNode.connect(ctx.destination);
+        customMusicGainRef.current = gainNode;
+
+        audio.play().then(() => {
+          fadeIn(gainNode, settingsRef.current.ambientVolume, 1.5);
+        }).catch(e => console.warn('[VoiceMode] Custom music play error:', e));
+      } catch (e) {
+        console.warn('[VoiceMode] Custom music setup error:', e);
+      }
     }
-  }, []);
+  }, [ensureAudioCtx]);
 
   const stopAmbient = useCallback(() => {
     if (ambientRef.current) {
-      fadeOut(ambientRef.current.gain, 1.0); // Fade out over 1s
+      fadeOut(ambientRef.current.gain, 1.0);
       const ref = ambientRef.current;
       setTimeout(() => { ref.stop(); }, 1200);
       ambientRef.current = null;
+    }
+    if (customMusicGainRef.current) {
+      fadeOut(customMusicGainRef.current, 1.0);
+      const audioEl = customMusicRef.current;
+      setTimeout(() => {
+        if (audioEl) { audioEl.pause(); audioEl.src = ''; }
+      }, 1200);
+      customMusicRef.current = null;
+      customMusicGainRef.current = null;
     }
   }, []);
 
@@ -321,9 +381,27 @@ export function useVoiceMode({
       const audio = new Audio(url);
       audioRef.current = audio;
 
+      // Apply TTS volume
+      audio.volume = s.ttsVolume;
+
+      // Set up AnalyserNode for lip-sync
+      try {
+        const ctx = ensureAudioCtx();
+        const source = ctx.createMediaElementSource(audio);
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 256;
+        analyser.smoothingTimeConstant = 0.7;
+        source.connect(analyser);
+        analyser.connect(ctx.destination);
+        analyserRef.current = analyser;
+      } catch (e) {
+        console.warn('[VoiceMode] AnalyserNode setup error:', e);
+      }
+
       audio.onended = () => {
         URL.revokeObjectURL(url);
         audioRef.current = null;
+        analyserRef.current = null;
         stopAmbient();
         resumeListening();
       };
@@ -331,6 +409,7 @@ export function useVoiceMode({
       audio.onerror = () => {
         URL.revokeObjectURL(url);
         audioRef.current = null;
+        analyserRef.current = null;
         stopAmbient();
         console.warn('[VoiceMode] Audio playback error');
         resumeListening();
@@ -339,12 +418,13 @@ export function useVoiceMode({
       await audio.play();
     } catch (err) {
       console.warn('[VoiceMode] TTS error (showing text only):', err);
+      analyserRef.current = null;
       stopAmbient();
       if (mountedRef.current) {
         setTimeout(resumeListening, 2000);
       }
     }
-  }, [setStateSync, resumeListening, startAmbient, stopAmbient]);
+  }, [setStateSync, resumeListening, startAmbient, stopAmbient, ensureAudioCtx]);
 
   // Actual sendToAgent implementation
   const sendToAgent = useCallback(async (text: string) => {
@@ -587,7 +667,7 @@ export function useVoiceMode({
                 await sendToAgentRef.current(fullText);
               } else {
                 console.log('[VoiceMode] Trigger found but nothing to send');
-                setLastTranscript('Nothing to send yet — speak first');
+                setLastTranscript('Nothing to send yet \u2014 speak first');
                 stateRef.current = 'listening';
                 setState('listening');
               }
@@ -673,11 +753,19 @@ export function useVoiceMode({
         audioRef.current = null;
       }
 
+      analyserRef.current = null;
+
       // Clean up ambient
       if (ambientRef.current) {
         ambientRef.current.stop();
         ambientRef.current = null;
       }
+      if (customMusicRef.current) {
+        customMusicRef.current.pause();
+        customMusicRef.current.src = '';
+        customMusicRef.current = null;
+      }
+      customMusicGainRef.current = null;
       if (audioCtxRef.current) {
         audioCtxRef.current.close().catch(() => {});
         audioCtxRef.current = null;
@@ -748,6 +836,7 @@ export function useVoiceMode({
       audioRef.current.pause();
       audioRef.current = null;
     }
+    analyserRef.current = null;
     stopAmbient();
     onCloseRef.current?.();
   }, [clearAutoSend, stopAmbient]);
@@ -763,5 +852,6 @@ export function useVoiceMode({
     retry,
     close,
     reloadSettings,
+    getAudioLevel,
   };
 }

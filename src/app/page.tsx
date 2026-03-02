@@ -7,13 +7,14 @@ import ChatView from '@/components/ChatView';
 import TasksView from '@/components/TasksView';
 import ArenaView from '@/components/ArenaView';
 import NotesView from '@/components/NotesView';
+import SettingsView from '@/components/SettingsView';
 import { Agent, AgentsListResult } from '@/lib/types';
 
 const LAST_SEEN_KEY = 'openclaw-lastSeen';
 const SELECTED_AGENT_KEY = 'openclaw-selectedAgent';
 const UNREAD_POLL_INTERVAL = 30_000; // 30 seconds
 
-type AppView = 'chat' | 'tasks' | 'arena' | 'notes';
+type AppView = 'chat' | 'tasks' | 'arena' | 'notes' | 'settings';
 
 function loadLastSeen(): Record<string, number> {
   try {
@@ -247,7 +248,11 @@ export default function Home() {
       <NavTabs activeView={activeView} onChangeView={setActiveView} onRefresh={handleRefresh} pendingTaskCount={pendingTaskCount} />
 
       {/* Content based on active view */}
-      {activeView === 'arena' ? (
+      {activeView === 'settings' ? (
+        <div className="flex-1 min-h-0 overflow-hidden">
+          <SettingsView />
+        </div>
+      ) : activeView === 'arena' ? (
         <div className="flex-1 min-h-0 overflow-hidden">
           <ArenaView />
         </div>
@@ -378,8 +383,23 @@ function NavTabs({ activeView, onChangeView, onRefresh, pendingTaskCount = 0 }: 
       >
         Notes
       </button>
-      {/* Spacer + Refresh button */}
+      {/* Spacer + Settings + Refresh button */}
       <div className="flex-1" />
+      <button
+        onClick={() => onChangeView('settings')}
+        className={`flex items-center justify-center w-8 h-8 rounded-lg transition-colors active:scale-90 ${
+          activeView === 'settings'
+            ? 'text-white bg-[var(--accent)]'
+            : 'text-[var(--text-muted)] hover:text-white hover:bg-[var(--bg-hover)]'
+        }`}
+        aria-label="Settings"
+        title="Settings"
+      >
+        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+          <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+        </svg>
+      </button>
       {onRefresh && (
         <button
           onClick={onRefresh}

@@ -2,17 +2,12 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import {
-  VoiceSettings as VoiceSettingsType,
+  VoiceSettings,
   VOICE_DEFAULTS,
   AVAILABLE_VOICES,
   loadVoiceSettings,
   saveVoiceSettings,
 } from '@/lib/voiceSettings';
-
-interface VoiceSettingsProps {
-  onClose: () => void;
-  onSave: (settings: VoiceSettingsType) => void;
-}
 
 interface MusicTrack {
   key: string;
@@ -26,16 +21,17 @@ const PREVIEW_TEXT: Record<string, string> = {
   en: 'Hello, I am your voice assistant. How do I sound?',
 };
 
-export default function VoiceSettings({ onClose, onSave }: VoiceSettingsProps) {
-  const [settings, setSettings] = useState<VoiceSettingsType>(loadVoiceSettings);
+export default function SettingsView() {
+  const [settings, setSettings] = useState<VoiceSettings>(loadVoiceSettings);
   const [previewing, setPreviewing] = useState(false);
   const [tracks, setTracks] = useState<MusicTrack[]>([]);
   const [uploading, setUploading] = useState(false);
   const [r2Configured, setR2Configured] = useState(false);
+  const [saved, setSaved] = useState(false);
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Load music tracks
+  // Load music tracks on mount
   useEffect(() => {
     fetch('/api/music')
       .then(res => res.json())
@@ -46,21 +42,22 @@ export default function VoiceSettings({ onClose, onSave }: VoiceSettingsProps) {
       .catch(() => {});
   }, []);
 
-  const update = useCallback(<K extends keyof VoiceSettingsType>(key: K, value: VoiceSettingsType[K]) => {
+  const update = useCallback(<K extends keyof VoiceSettings>(key: K, value: VoiceSettings[K]) => {
     setSettings(prev => ({ ...prev, [key]: value }));
+    setSaved(false);
   }, []);
 
   const handleSave = useCallback(() => {
     saveVoiceSettings(settings);
-    onSave(settings);
-    onClose();
-  }, [settings, onSave, onClose]);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  }, [settings]);
 
   const handleReset = useCallback(() => {
     setSettings({ ...VOICE_DEFAULTS });
+    setSaved(false);
   }, []);
 
-  // Get language-aware preview text
   const getPreviewLang = useCallback((): string => {
     const voice = AVAILABLE_VOICES.find(v => v.id === settings.voice);
     return voice?.lang || 'tr';
@@ -112,9 +109,8 @@ export default function VoiceSettings({ onClose, onSave }: VoiceSettingsProps) {
     } catch {
       setPreviewing(false);
     }
-  }, [settings.voice, settings.rate, settings.pitch, settings.ttsVolume, previewing, getPreviewLang]);
+  }, [settings, previewing, getPreviewLang]);
 
-  // Upload music file
   const handleUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -124,11 +120,7 @@ export default function VoiceSettings({ onClose, onSave }: VoiceSettingsProps) {
       const formData = new FormData();
       formData.append('file', file);
 
-      const res = await fetch('/api/music', {
-        method: 'POST',
-        body: formData,
-      });
-
+      const res = await fetch('/api/music', { method: 'POST', body: formData });
       if (!res.ok) {
         const data = await res.json();
         throw new Error(data.error || 'Upload failed');
@@ -144,7 +136,6 @@ export default function VoiceSettings({ onClose, onSave }: VoiceSettingsProps) {
     }
   }, []);
 
-  // Delete music track
   const handleDelete = useCallback(async (track: MusicTrack) => {
     const key = track.key.replace(/^music\//, '');
     try {
@@ -157,104 +148,59 @@ export default function VoiceSettings({ onClose, onSave }: VoiceSettingsProps) {
   }, [settings.ambientSource, update]);
 
   return (
-    <div className="fixed inset-0 z-[60] bg-[var(--bg-primary)] flex flex-col animate-fade-in safe-top safe-bottom">
+    <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border)]">
-        <button
-          onClick={onClose}
-          className="flex items-center justify-center w-10 h-10 rounded-full bg-[var(--bg-tertiary)] hover:bg-[var(--bg-hover)] transition-colors active:scale-95"
-          title="Back"
-        >
-          <svg className="w-5 h-5 text-[var(--text-primary)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
-          </svg>
-        </button>
-
-        <span className="text-sm font-medium text-[var(--text-primary)]">Voice Settings</span>
-
+      <div className="shrink-0 flex items-center justify-between px-5 py-3 border-b border-[var(--border)]">
+        <h1 className="text-lg font-semibold text-[var(--text-primary)]">Settings</h1>
         <button
           onClick={handleSave}
-          className="px-4 py-2 bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white rounded-xl text-sm font-medium transition-colors active:scale-95"
+          className={`px-4 py-2 rounded-xl text-sm font-medium transition-all active:scale-95 ${
+            saved
+              ? 'bg-[var(--success)] text-white'
+              : 'bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white'
+          }`}
         >
-          Save
+          {saved ? 'Saved!' : 'Save'}
         </button>
       </div>
 
-      {/* Content */}
-      <div className="flex-1 overflow-y-auto px-5 py-4 space-y-6">
+      {/* Scrollable content */}
+      <div className="flex-1 overflow-y-auto px-5 py-5 space-y-7">
 
-        {/* Voice Selection — 2-column grid */}
-        <Section title="Voice">
-          <div className="grid grid-cols-2 gap-2">
-            {AVAILABLE_VOICES.map(v => (
-              <button
-                key={v.id}
-                onClick={() => update('voice', v.id)}
-                className={`px-3 py-3 rounded-xl text-sm font-medium transition-all active:scale-95 ${
-                  settings.voice === v.id
-                    ? 'bg-[var(--accent)] text-white shadow-md'
-                    : 'bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]'
-                }`}
-              >
-                {v.label}
-              </button>
-            ))}
-          </div>
-        </Section>
+        {/* === VOICE SECTION === */}
+        <SectionHeader>Voice</SectionHeader>
+
+        {/* Voice grid */}
+        <div className="grid grid-cols-2 gap-2">
+          {AVAILABLE_VOICES.map(v => (
+            <button
+              key={v.id}
+              onClick={() => update('voice', v.id)}
+              className={`px-3 py-3 rounded-xl text-sm font-medium transition-all active:scale-95 ${
+                settings.voice === v.id
+                  ? 'bg-[var(--accent)] text-white shadow-md'
+                  : 'bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]'
+              }`}
+            >
+              {v.label}
+            </button>
+          ))}
+        </div>
 
         {/* Speed */}
-        <Section title="Speed" value={`${settings.rate > 0 ? '+' : ''}${settings.rate}%`}>
-          <input
-            type="range"
-            min={-50}
-            max={50}
-            step={1}
-            value={settings.rate}
-            onChange={e => update('rate', Number(e.target.value))}
-            className="w-full accent-[var(--accent)] h-2 rounded-full"
-          />
-          <div className="flex justify-between text-[10px] text-[var(--text-muted)] mt-1">
-            <span>-50%</span>
-            <span>0</span>
-            <span>+50%</span>
-          </div>
-        </Section>
+        <Slider label="Speed" value={`${settings.rate > 0 ? '+' : ''}${settings.rate}%`}
+          min={-50} max={50} step={1} current={settings.rate}
+          onChange={v => update('rate', v)} marks={['-50%', '0', '+50%']} />
 
         {/* Pitch */}
-        <Section title="Pitch" value={`${settings.pitch > 0 ? '+' : ''}${settings.pitch}Hz`}>
-          <input
-            type="range"
-            min={-20}
-            max={20}
-            step={1}
-            value={settings.pitch}
-            onChange={e => update('pitch', Number(e.target.value))}
-            className="w-full accent-[var(--accent)] h-2 rounded-full"
-          />
-          <div className="flex justify-between text-[10px] text-[var(--text-muted)] mt-1">
-            <span>-20Hz</span>
-            <span>0</span>
-            <span>+20Hz</span>
-          </div>
-        </Section>
+        <Slider label="Pitch" value={`${settings.pitch > 0 ? '+' : ''}${settings.pitch}Hz`}
+          min={-20} max={20} step={1} current={settings.pitch}
+          onChange={v => update('pitch', v)} marks={['-20Hz', '0', '+20Hz']} />
 
         {/* TTS Volume */}
-        <Section title="TTS Volume" value={`${Math.round(settings.ttsVolume * 100)}%`}>
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.05}
-            value={settings.ttsVolume}
-            onChange={e => update('ttsVolume', Number(e.target.value))}
-            className="w-full accent-[var(--accent)] h-2 rounded-full"
-          />
-          <div className="flex justify-between text-[10px] text-[var(--text-muted)] mt-1">
-            <span>0%</span>
-            <span>50%</span>
-            <span>100%</span>
-          </div>
-        </Section>
+        <Slider label="TTS Volume" value={`${Math.round(settings.ttsVolume * 100)}%`}
+          min={0} max={1} step={0.05} current={settings.ttsVolume}
+          onChange={v => update('ttsVolume', v)} marks={['0%', '50%', '100%']} />
 
         {/* Preview */}
         <button
@@ -276,17 +222,13 @@ export default function VoiceSettings({ onClose, onSave }: VoiceSettingsProps) {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
                 <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
-              <span className="text-[var(--text-primary)]">Preview</span>
+              <span className="text-[var(--text-primary)]">Preview Voice</span>
             </>
           )}
         </button>
 
-        {/* Divider — Background Music */}
-        <div className="flex items-center gap-3">
-          <div className="flex-1 h-px bg-[var(--border)]" />
-          <span className="text-xs text-[var(--text-muted)]">Background Music</span>
-          <div className="flex-1 h-px bg-[var(--border)]" />
-        </div>
+        {/* === BACKGROUND MUSIC SECTION === */}
+        <SectionHeader>Background Music</SectionHeader>
 
         {/* Ambient Toggle */}
         <div className="flex items-center justify-between">
@@ -297,35 +239,21 @@ export default function VoiceSettings({ onClose, onSave }: VoiceSettingsProps) {
               settings.ambientEnabled ? 'bg-[var(--accent)]' : 'bg-[var(--bg-tertiary)]'
             }`}
           >
-            <div
-              className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow transition-transform ${
-                settings.ambientEnabled ? 'translate-x-6' : 'translate-x-1'
-              }`}
-            />
+            <div className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow transition-transform ${
+              settings.ambientEnabled ? 'translate-x-6' : 'translate-x-1'
+            }`} />
           </button>
         </div>
 
         {settings.ambientEnabled && (
           <>
-            {/* Ambient Volume */}
-            <Section title="Volume" value={settings.ambientVolume.toFixed(2)}>
-              <input
-                type="range"
-                min={0.02}
-                max={0.20}
-                step={0.01}
-                value={settings.ambientVolume}
-                onChange={e => update('ambientVolume', Number(e.target.value))}
-                className="w-full accent-[var(--accent)] h-2 rounded-full"
-              />
-              <div className="flex justify-between text-[10px] text-[var(--text-muted)] mt-1">
-                <span>0.02</span>
-                <span>0.20</span>
-              </div>
-            </Section>
+            <Slider label="Volume" value={settings.ambientVolume.toFixed(2)}
+              min={0.02} max={0.20} step={0.01} current={settings.ambientVolume}
+              onChange={v => update('ambientVolume', v)} marks={['0.02', '0.20']} />
 
-            {/* Music Source */}
-            <Section title="Source">
+            {/* Source Selector */}
+            <div>
+              <div className="text-sm text-[var(--text-primary)] mb-2">Source</div>
               <div className="space-y-2">
                 <button
                   onClick={() => update('ambientSource', 'default')}
@@ -361,7 +289,6 @@ export default function VoiceSettings({ onClose, onSave }: VoiceSettingsProps) {
                   </div>
                 ))}
 
-                {/* Upload button */}
                 {r2Configured && (
                   <>
                     <input
@@ -396,57 +323,79 @@ export default function VoiceSettings({ onClose, onSave }: VoiceSettingsProps) {
                   </>
                 )}
               </div>
-            </Section>
+            </div>
           </>
         )}
 
-        {/* Divider — Timing */}
-        <div className="flex items-center gap-3">
-          <div className="flex-1 h-px bg-[var(--border)]" />
-          <span className="text-xs text-[var(--text-muted)]">Timing</span>
-          <div className="flex-1 h-px bg-[var(--border)]" />
+        {/* === TIMING SECTION === */}
+        <SectionHeader>Timing</SectionHeader>
+
+        <Slider label="Auto-send delay" value={`${settings.autoSendDelay}s`}
+          min={2} max={8} step={0.5} current={settings.autoSendDelay}
+          onChange={v => update('autoSendDelay', v)} marks={['2s', '8s']} />
+
+        {/* === ABOUT SECTION === */}
+        <SectionHeader>About</SectionHeader>
+
+        <div className="space-y-2 text-sm text-[var(--text-secondary)]">
+          <div className="flex justify-between">
+            <span>Version</span>
+            <span className="font-mono text-[var(--text-muted)]">0.1.0</span>
+          </div>
+          <div className="flex justify-between">
+            <span>App</span>
+            <span className="font-mono text-[var(--text-muted)]">OpenClaw Chat</span>
+          </div>
         </div>
 
-        {/* Auto-send delay */}
-        <Section title="Auto-send delay" value={`${settings.autoSendDelay}s`}>
-          <input
-            type="range"
-            min={2}
-            max={8}
-            step={0.5}
-            value={settings.autoSendDelay}
-            onChange={e => update('autoSendDelay', Number(e.target.value))}
-            className="w-full accent-[var(--accent)] h-2 rounded-full"
-          />
-          <div className="flex justify-between text-[10px] text-[var(--text-muted)] mt-1">
-            <span>2s</span>
-            <span>8s</span>
-          </div>
-        </Section>
-
-        {/* Reset */}
+        {/* Reset Defaults */}
         <button
           onClick={handleReset}
           className="w-full px-4 py-3 text-sm text-[var(--text-muted)] hover:text-[var(--error)] transition-colors"
         >
-          Reset Defaults
+          Reset All Defaults
         </button>
 
-        {/* Bottom padding */}
-        <div className="h-4" />
+        <div className="h-8" />
       </div>
     </div>
   );
 }
 
-function Section({ title, value, children }: { title: string; value?: string; children: React.ReactNode }) {
+function SectionHeader({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-3">
+      <div className="flex-1 h-px bg-[var(--border)]" />
+      <span className="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider">{children}</span>
+      <div className="flex-1 h-px bg-[var(--border)]" />
+    </div>
+  );
+}
+
+function Slider({
+  label, value, min, max, step, current, onChange, marks,
+}: {
+  label: string; value: string; min: number; max: number; step: number;
+  current: number; onChange: (v: number) => void; marks: string[];
+}) {
   return (
     <div>
       <div className="flex items-center justify-between mb-2">
-        <span className="text-sm text-[var(--text-primary)]">{title}</span>
-        {value && <span className="text-xs text-[var(--text-muted)] font-mono">{value}</span>}
+        <span className="text-sm text-[var(--text-primary)]">{label}</span>
+        <span className="text-xs text-[var(--text-muted)] font-mono">{value}</span>
       </div>
-      {children}
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={current}
+        onChange={e => onChange(Number(e.target.value))}
+        className="w-full accent-[var(--accent)] h-2 rounded-full"
+      />
+      <div className="flex justify-between text-[10px] text-[var(--text-muted)] mt-1">
+        {marks.map((m, i) => <span key={i}>{m}</span>)}
+      </div>
     </div>
   );
 }
