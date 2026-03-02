@@ -19,7 +19,7 @@ import threading
 
 PORT = 18791
 TOKEN = os.environ.get('OPENCLAW_GATEWAY_TOKEN', '')
-MODEL_SIZE = os.environ.get('WHISPER_MODEL', 'tiny')
+MODEL_SIZE = os.environ.get('WHISPER_MODEL', 'large-v3-turbo')
 COMPUTE_TYPE = os.environ.get('WHISPER_COMPUTE_TYPE', 'int8')
 
 # Global model — loaded once at startup
@@ -143,8 +143,9 @@ class TranscriptionHandler(http.server.BaseHTTPRequestHandler):
                 segments, info = model.transcribe(
                     wav_path,
                     language=language,
-                    beam_size=3,
+                    beam_size=5,
                     vad_filter=True,  # Skip silence for speed
+                    initial_prompt="Bu bir Türkçe konuşmadır.",
                 )
                 text = " ".join(segment.text.strip() for segment in segments)
 
