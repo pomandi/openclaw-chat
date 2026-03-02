@@ -10,10 +10,9 @@ import {
 } from '@/lib/voiceSettings';
 
 interface MusicTrack {
-  key: string;
+  filename: string;
   name: string;
-  size: number;
-  lastModified?: string;
+  url: string;
 }
 
 const PREVIEW_TEXT: Record<string, string> = {
@@ -25,20 +24,14 @@ export default function SettingsView() {
   const [settings, setSettings] = useState<VoiceSettings>(loadVoiceSettings);
   const [previewing, setPreviewing] = useState(false);
   const [tracks, setTracks] = useState<MusicTrack[]>([]);
-  const [uploading, setUploading] = useState(false);
-  const [r2Configured, setR2Configured] = useState(false);
   const [saved, setSaved] = useState(false);
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Load music tracks on mount
   useEffect(() => {
     fetch('/api/music')
       .then(res => res.json())
-      .then(data => {
-        setTracks(data.tracks || []);
-        setR2Configured(data.configured ?? false);
-      })
+      .then(data => setTracks(data.tracks || []))
       .catch(() => {});
   }, []);
 
@@ -110,42 +103,6 @@ export default function SettingsView() {
       setPreviewing(false);
     }
   }, [settings, previewing, getPreviewLang]);
-
-  const handleUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setUploading(true);
-
-    try {
-      const formData = new FormData();
-      formData.append('file', file);
-
-      const res = await fetch('/api/music', { method: 'POST', body: formData });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Upload failed');
-      }
-
-      const data = await res.json();
-      setTracks(prev => [...prev, { key: data.key, name: data.name, size: data.size }]);
-    } catch (err: any) {
-      console.error('Upload error:', err.message);
-    } finally {
-      setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-    }
-  }, []);
-
-  const handleDelete = useCallback(async (track: MusicTrack) => {
-    const key = track.key.replace(/^music\//, '');
-    try {
-      await fetch(`/api/music/${encodeURIComponent(key)}`, { method: 'DELETE' });
-      setTracks(prev => prev.filter(t => t.key !== track.key));
-      if (settings.ambientSource === track.key) {
-        update('ambientSource', 'default');
-      }
-    } catch {}
-  }, [settings.ambientSource, update]);
 
   return (
     <div className="flex flex-col h-full">
@@ -266,61 +223,22 @@ export default function SettingsView() {
                   Default Synth Pad
                 </button>
                 {tracks.map(track => (
-                  <div key={track.key} className="flex items-center gap-2">
-                    <button
-                      onClick={() => update('ambientSource', track.key)}
-                      className={`flex-1 px-3 py-2.5 rounded-xl text-sm text-left transition-all active:scale-[0.98] truncate ${
-                        settings.ambientSource === track.key
-                          ? 'bg-[var(--accent)] text-white'
-                          : 'bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]'
-                      }`}
-                    >
-                      {track.name}
-                    </button>
-                    <button
-                      onClick={() => handleDelete(track)}
-                      className="shrink-0 w-8 h-8 flex items-center justify-center rounded-lg text-[var(--text-muted)] hover:text-[var(--error)] hover:bg-[var(--bg-hover)] transition-colors"
-                      title="Delete"
-                    >
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                      </svg>
-                    </button>
-                  </div>
+                  <button
+                    key={track.filename}
+                    onClick={() => update('ambientSource', track.filename)}
+                    className={`w-full px-3 py-2.5 rounded-xl text-sm text-left transition-all active:scale-[0.98] truncate ${
+                      settings.ambientSource === track.filename
+                        ? 'bg-[var(--accent)] text-white'
+                        : 'bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]'
+                    }`}
+                  >
+                    {track.name}
+                  </button>
                 ))}
-
-                {r2Configured && (
-                  <>
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept="audio/*"
-                      onChange={handleUpload}
-                      className="hidden"
-                    />
-                    <button
-                      onClick={() => fileInputRef.current?.click()}
-                      disabled={uploading}
-                      className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm bg-[var(--bg-tertiary)] hover:bg-[var(--bg-hover)] text-[var(--text-secondary)] transition-all active:scale-[0.98] disabled:opacity-50"
-                    >
-                      {uploading ? (
-                        <>
-                          <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                          </svg>
-                          Uploading...
-                        </>
-                      ) : (
-                        <>
-                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                          </svg>
-                          Upload Music
-                        </>
-                      )}
-                    </button>
-                  </>
+                {tracks.length === 0 && (
+                  <p className="text-xs text-[var(--text-muted)] italic">
+                    Add .mp3 files to public/music/ to see them here
+                  </p>
                 )}
               </div>
             </div>

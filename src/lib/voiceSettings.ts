@@ -5,7 +5,7 @@ export interface VoiceSettings {
   ttsVolume: number;       // 0.0 to 1.0
   ambientEnabled: boolean;
   ambientVolume: number;   // 0.02 to 0.20
-  ambientSource: string;   // 'default' | R2 key
+  ambientSource: string;   // 'default' | filename from public/music/
   autoSendDelay: number;   // 2 to 8 (seconds)
 }
 

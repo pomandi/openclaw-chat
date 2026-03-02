@@ -302,14 +302,13 @@ export function useVoiceMode({
       ambientRef.current = pad;
       fadeIn(pad.gain, settingsRef.current.ambientVolume, 1.5);
     } else {
-      // Custom music from R2
+      // Custom music from public/music/
       if (customMusicRef.current) {
         customMusicRef.current.pause();
         customMusicRef.current = null;
       }
 
-      const key = source.replace(/^music\//, '');
-      const audio = new Audio(`/api/music/${encodeURIComponent(key)}`);
+      const audio = new Audio(`/music/${encodeURIComponent(source)}`);
       audio.loop = true;
       audio.crossOrigin = 'anonymous';
       customMusicRef.current = audio;
