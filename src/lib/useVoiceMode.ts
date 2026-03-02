@@ -106,6 +106,75 @@ function stripTriggerWords(text: string): string {
 // Auto-send after this many ms of silence when there's accumulated text
 const AUTO_SEND_DELAY_MS = 4000;
 
+// --- Ambient background music (Web Audio API) ---
+// Generates a soft warm pad under TTS playback — zero latency, no file needed
+function createAmbientPad(ctx: AudioContext): { gain: GainNode; stop: () => void } {
+  const master = ctx.createGain();
+  master.gain.value = 0;
+  master.connect(ctx.destination);
+
+  const oscs: OscillatorNode[] = [];
+  const gains: GainNode[] = [];
+
+  // Soft chord: C3-E3-G3-B3 (warm jazz voicing)
+  const freqs = [130.81, 164.81, 196.00, 246.94];
+  for (const freq of freqs) {
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.value = freq;
+
+    // Slight detune for warmth
+    osc.detune.value = (Math.random() - 0.5) * 8;
+
+    const g = ctx.createGain();
+    g.gain.value = 0.12;
+
+    // Low-pass filter for softness
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 400;
+    filter.Q.value = 0.5;
+
+    osc.connect(filter);
+    filter.connect(g);
+    g.connect(master);
+    osc.start();
+    oscs.push(osc);
+    gains.push(g);
+  }
+
+  // Very subtle LFO on gain for gentle movement
+  const lfo = ctx.createOscillator();
+  lfo.frequency.value = 0.15; // very slow
+  const lfoGain = ctx.createGain();
+  lfoGain.gain.value = 0.02;
+  lfo.connect(lfoGain);
+  lfoGain.connect(master.gain);
+  lfo.start();
+
+  return {
+    gain: master,
+    stop: () => {
+      oscs.forEach(o => { try { o.stop(); } catch {} });
+      try { lfo.stop(); } catch {}
+    },
+  };
+}
+
+function fadeIn(gain: GainNode, target: number, durationSec: number) {
+  const now = gain.context.currentTime;
+  gain.gain.cancelScheduledValues(now);
+  gain.gain.setValueAtTime(gain.gain.value, now);
+  gain.gain.linearRampToValueAtTime(target, now + durationSec);
+}
+
+function fadeOut(gain: GainNode, durationSec: number) {
+  const now = gain.context.currentTime;
+  gain.gain.cancelScheduledValues(now);
+  gain.gain.setValueAtTime(gain.gain.value, now);
+  gain.gain.linearRampToValueAtTime(0, now + durationSec);
+}
+
 export function useVoiceMode({
   agentId,
   sessionKey,
@@ -129,6 +198,8 @@ export function useVoiceMode({
   const mountedRef = useRef(true);
   const stateRef = useRef<VoiceModeState>('initializing');
   const autoSendTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const ambientRef = useRef<{ gain: GainNode; stop: () => void } | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
 
   // Stable refs for values/callbacks used inside the SSE/VAD closures
   const responseModeRef = useRef(responseMode);
@@ -185,6 +256,38 @@ export function useVoiceMode({
     vadRef.current?.start().catch(() => {});
   }, [setStateSync]);
 
+  // Start ambient background music
+  const startAmbient = useCallback(() => {
+    try {
+      if (!audioCtxRef.current) {
+        audioCtxRef.current = new AudioContext();
+      }
+      const ctx = audioCtxRef.current;
+      if (ctx.state === 'suspended') ctx.resume();
+
+      // Stop previous if any
+      if (ambientRef.current) {
+        ambientRef.current.stop();
+        ambientRef.current = null;
+      }
+
+      const pad = createAmbientPad(ctx);
+      ambientRef.current = pad;
+      fadeIn(pad.gain, 0.08, 1.5); // Gentle fade in over 1.5s, very low volume
+    } catch (e) {
+      console.warn('[VoiceMode] Ambient start error:', e);
+    }
+  }, []);
+
+  const stopAmbient = useCallback(() => {
+    if (ambientRef.current) {
+      fadeOut(ambientRef.current.gain, 1.0); // Fade out over 1s
+      const ref = ambientRef.current;
+      setTimeout(() => { ref.stop(); }, 1200);
+      ambientRef.current = null;
+    }
+  }, []);
+
   // Play TTS audio for agent response
   const playTTS = useCallback(async (text: string) => {
     if (!mountedRef.current) return;
@@ -192,6 +295,9 @@ export function useVoiceMode({
 
     // Pause VAD during TTS
     try { await vadRef.current?.pause(); } catch {}
+
+    // Start ambient background music
+    startAmbient();
 
     try {
       const res = await fetch('/api/gateway/tts', {
@@ -211,12 +317,14 @@ export function useVoiceMode({
       audio.onended = () => {
         URL.revokeObjectURL(url);
         audioRef.current = null;
+        stopAmbient();
         resumeListening();
       };
 
       audio.onerror = () => {
         URL.revokeObjectURL(url);
         audioRef.current = null;
+        stopAmbient();
         console.warn('[VoiceMode] Audio playback error');
         resumeListening();
       };
@@ -224,11 +332,12 @@ export function useVoiceMode({
       await audio.play();
     } catch (err) {
       console.warn('[VoiceMode] TTS error (showing text only):', err);
+      stopAmbient();
       if (mountedRef.current) {
         setTimeout(resumeListening, 2000);
       }
     }
-  }, [setStateSync, resumeListening]);
+  }, [setStateSync, resumeListening, startAmbient, stopAmbient]);
 
   // Actual sendToAgent implementation
   const sendToAgent = useCallback(async (text: string) => {
@@ -555,6 +664,16 @@ export function useVoiceMode({
         audioRef.current = null;
       }
 
+      // Clean up ambient
+      if (ambientRef.current) {
+        ambientRef.current.stop();
+        ambientRef.current = null;
+      }
+      if (audioCtxRef.current) {
+        audioCtxRef.current.close().catch(() => {});
+        audioCtxRef.current = null;
+      }
+
       wakeLockRef.current?.release().catch(() => {});
       wakeLockRef.current = null;
     };
@@ -615,8 +734,9 @@ export function useVoiceMode({
       audioRef.current.pause();
       audioRef.current = null;
     }
+    stopAmbient();
     onCloseRef.current?.();
-  }, [clearAutoSend]);
+  }, [clearAutoSend, stopAmbient]);
 
   return {
     state,
