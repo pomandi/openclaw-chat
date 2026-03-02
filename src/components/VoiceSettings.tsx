@@ -30,6 +30,8 @@ export default function VoiceSettings({ onClose, onSave }: VoiceSettingsProps) {
   const [previewing, setPreviewing] = useState(false);
   const [tracks, setTracks] = useState<MusicTrack[]>([]);
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+  const ambientCtxRef = useRef<AudioContext | null>(null);
+  const ambientStopRef = useRef<(() => void) | null>(null);
 
   // Load music tracks
   useEffect(() => {
@@ -58,6 +60,69 @@ export default function VoiceSettings({ onClose, onSave }: VoiceSettingsProps) {
     return voice?.lang || 'tr';
   }, [settings.voice]);
 
+  const stopAmbientPreview = useCallback(() => {
+    if (ambientStopRef.current) {
+      ambientStopRef.current();
+      ambientStopRef.current = null;
+    }
+  }, []);
+
+  const startAmbientPreview = useCallback(() => {
+    if (!settings.ambientEnabled) return;
+    stopAmbientPreview();
+
+    if (!ambientCtxRef.current) {
+      ambientCtxRef.current = new AudioContext();
+    }
+    const ctx = ambientCtxRef.current;
+    if (ctx.state === 'suspended') ctx.resume();
+
+    const vol = settings.ambientVolume;
+
+    if (settings.ambientSource === 'default') {
+      const master = ctx.createGain();
+      master.gain.value = 0;
+      master.connect(ctx.destination);
+      const oscs: OscillatorNode[] = [];
+      for (const freq of [130.81, 164.81, 196.00, 246.94]) {
+        const osc = ctx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        osc.detune.value = (Math.random() - 0.5) * 8;
+        const g = ctx.createGain();
+        g.gain.value = 0.12;
+        const filter = ctx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.value = 400;
+        filter.Q.value = 0.5;
+        osc.connect(filter);
+        filter.connect(g);
+        g.connect(master);
+        osc.start();
+        oscs.push(osc);
+      }
+      const now = ctx.currentTime;
+      master.gain.setValueAtTime(0, now);
+      master.gain.linearRampToValueAtTime(vol, now + 0.8);
+
+      ambientStopRef.current = () => {
+        const t = ctx.currentTime;
+        master.gain.setValueAtTime(master.gain.value, t);
+        master.gain.linearRampToValueAtTime(0, t + 0.8);
+        setTimeout(() => oscs.forEach(o => { try { o.stop(); } catch {} }), 1000);
+      };
+    } else {
+      const musicAudio = new Audio(`/music/${encodeURIComponent(settings.ambientSource)}`);
+      musicAudio.loop = true;
+      musicAudio.volume = vol * 5;
+      musicAudio.play().catch(() => {});
+      ambientStopRef.current = () => {
+        musicAudio.pause();
+        musicAudio.src = '';
+      };
+    }
+  }, [settings.ambientEnabled, settings.ambientSource, settings.ambientVolume, stopAmbientPreview]);
+
   const handlePreview = useCallback(async () => {
     if (previewing) return;
     setPreviewing(true);
@@ -66,6 +131,8 @@ export default function VoiceSettings({ onClose, onSave }: VoiceSettingsProps) {
       previewAudioRef.current.pause();
       previewAudioRef.current = null;
     }
+
+    startAmbientPreview();
 
     try {
       const lang = getPreviewLang();
@@ -92,19 +159,22 @@ export default function VoiceSettings({ onClose, onSave }: VoiceSettingsProps) {
       audio.onended = () => {
         URL.revokeObjectURL(url);
         previewAudioRef.current = null;
+        stopAmbientPreview();
         setPreviewing(false);
       };
       audio.onerror = () => {
         URL.revokeObjectURL(url);
         previewAudioRef.current = null;
+        stopAmbientPreview();
         setPreviewing(false);
       };
 
       await audio.play();
     } catch {
+      stopAmbientPreview();
       setPreviewing(false);
     }
-  }, [settings.voice, settings.rate, settings.pitch, settings.ttsVolume, previewing, getPreviewLang]);
+  }, [settings, previewing, getPreviewLang, startAmbientPreview, stopAmbientPreview]);
 
   return (
     <div className="fixed inset-0 z-[60] bg-[var(--bg-primary)] flex flex-col animate-fade-in safe-top safe-bottom">
