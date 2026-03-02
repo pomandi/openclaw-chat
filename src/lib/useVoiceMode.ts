@@ -30,6 +30,7 @@ export interface VoiceModeReturn {
   agentResponse: string;
   speechProbability: number;
   lastTranscript: string;
+  manualSend: () => void;
   retry: () => void;
   close: () => void;
 }
@@ -80,7 +81,6 @@ const TRIGGER_PATTERNS = [
   /g[oö]nder/i,
   /yolla/i,
   /\bsend\b/i,
-  /g[oö]nder[.]?$/i,   // "gönder." at end
 ];
 const EXIT_PATTERNS = [
   /kapat/i,
@@ -97,13 +97,14 @@ function hasExitWord(text: string): boolean {
 
 function stripTriggerWords(text: string): string {
   let result = text;
-  // Remove trigger words (broad)
   result = result.replace(/g[oö]nder/gi, '');
   result = result.replace(/yolla/gi, '');
   result = result.replace(/\bsend\b/gi, '');
-  // Clean up leftover punctuation/whitespace
   return result.replace(/[.,!?]+$/, '').trim();
 }
+
+// Auto-send after this many ms of silence when there's accumulated text
+const AUTO_SEND_DELAY_MS = 4000;
 
 export function useVoiceMode({
   agentId,
@@ -127,6 +128,7 @@ export function useVoiceMode({
   const accumulatedRef = useRef('');
   const mountedRef = useRef(true);
   const stateRef = useRef<VoiceModeState>('initializing');
+  const autoSendTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Stable refs for values/callbacks used inside the SSE/VAD closures
   const responseModeRef = useRef(responseMode);
@@ -143,6 +145,14 @@ export function useVoiceMode({
   const setStateSync = useCallback((s: VoiceModeState) => {
     stateRef.current = s;
     setState(s);
+  }, []);
+
+  // Clear auto-send timer
+  const clearAutoSend = useCallback(() => {
+    if (autoSendTimerRef.current) {
+      clearTimeout(autoSendTimerRef.current);
+      autoSendTimerRef.current = null;
+    }
   }, []);
 
   // Transcribe audio segment
@@ -165,36 +175,8 @@ export function useVoiceMode({
     return '';
   }, []);
 
-  // Send accumulated text to agent
-  const sendToAgent = useCallback(async (text: string) => {
-    if (!text.trim()) {
-      console.warn('[VoiceMode] sendToAgent: empty text, ignoring');
-      return;
-    }
-    console.log('[VoiceMode] >>> Sending to agent:', text);
-    setStateSync('thinking');
-    setAgentResponse('');
-    onMessageSentRef.current?.(text);
-
-    try {
-      const res = await fetch('/api/gateway/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agentId, message: text, sessionKey }),
-      });
-      if (!res.ok) {
-        const errText = await res.text();
-        throw new Error(`Chat error ${res.status}: ${errText}`);
-      }
-      console.log('[VoiceMode] Message sent OK, waiting for SSE response...');
-    } catch (err: any) {
-      console.error('[VoiceMode] Send error:', err);
-      if (mountedRef.current) {
-        setStateSync('error');
-        setError(`Send failed: ${err.message}`);
-      }
-    }
-  }, [agentId, sessionKey, setStateSync]);
+  // Send accumulated text to agent — uses ref so it's always current
+  const sendToAgentRef = useRef<(text: string) => Promise<void>>(async () => {});
 
   // Resume VAD listening
   const resumeListening = useCallback(() => {
@@ -242,12 +224,73 @@ export function useVoiceMode({
       await audio.play();
     } catch (err) {
       console.warn('[VoiceMode] TTS error (showing text only):', err);
-      // Keep agentResponse visible, just resume listening after a pause
       if (mountedRef.current) {
         setTimeout(resumeListening, 2000);
       }
     }
   }, [setStateSync, resumeListening]);
+
+  // Actual sendToAgent implementation
+  const sendToAgent = useCallback(async (text: string) => {
+    if (!text.trim()) {
+      console.warn('[VoiceMode] sendToAgent: empty text, ignoring');
+      return;
+    }
+    clearAutoSend();
+    console.log('[VoiceMode] >>> Sending to agent:', text);
+
+    // Pause VAD while waiting for response
+    try { await vadRef.current?.pause(); } catch {}
+
+    setStateSync('thinking');
+    setAgentResponse('');
+    onMessageSentRef.current?.(text);
+
+    try {
+      const res = await fetch('/api/gateway/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agentId, message: text, sessionKey }),
+      });
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`Chat error ${res.status}: ${errText}`);
+      }
+      console.log('[VoiceMode] Message sent OK, waiting for SSE response...');
+    } catch (err: any) {
+      console.error('[VoiceMode] Send error:', err);
+      if (mountedRef.current) {
+        setStateSync('error');
+        setError(`Send failed: ${err.message}`);
+      }
+    }
+  }, [agentId, sessionKey, setStateSync, clearAutoSend]);
+
+  // Keep sendToAgentRef in sync
+  useEffect(() => { sendToAgentRef.current = sendToAgent; }, [sendToAgent]);
+
+  // Start auto-send timer (resets on each call)
+  const startAutoSend = useCallback(() => {
+    clearAutoSend();
+    autoSendTimerRef.current = setTimeout(() => {
+      const text = accumulatedRef.current;
+      if (text.trim() && mountedRef.current && stateRef.current === 'listening') {
+        console.log('[VoiceMode] Auto-send after silence:', text);
+        setAccumulatedText(text);
+        sendToAgentRef.current(text);
+      }
+    }, AUTO_SEND_DELAY_MS);
+  }, [clearAutoSend]);
+
+  // Manual send — exposed to UI
+  const manualSend = useCallback(() => {
+    const text = accumulatedRef.current;
+    if (!text.trim()) return;
+    if (stateRef.current === 'thinking' || stateRef.current === 'speaking') return;
+    clearAutoSend();
+    console.log('[VoiceMode] Manual send:', text);
+    sendToAgentRef.current(text);
+  }, [clearAutoSend]);
 
   // Initialize SSE + VAD on mount
   useEffect(() => {
@@ -279,9 +322,9 @@ export function useVoiceMode({
             payload.message?.content ||
             '';
           setAgentResponse(text);
-          // Ensure we're in thinking state while streaming
           if (stateRef.current !== 'thinking') {
-            setStateSync('thinking');
+            stateRef.current = 'thinking';
+            setState('thinking');
           }
         } else if (payload.state === 'final') {
           const content = payload.message?.content;
@@ -304,13 +347,20 @@ export function useVoiceMode({
             playTTS(text);
           } else {
             // Text mode or empty: keep response visible, resume listening after brief pause
-            setTimeout(resumeListening, mode === 'text' ? 1500 : 0);
+            setTimeout(() => {
+              if (!mountedRef.current) return;
+              stateRef.current = 'listening';
+              setState('listening');
+              vadRef.current?.start().catch(() => {});
+            }, mode === 'text' ? 1500 : 0);
           }
         } else if (payload.state === 'error' || payload.state === 'aborted') {
           const errMsg = payload.errorMessage || 'Agent error';
           console.error('[VoiceMode] SSE error/abort:', errMsg);
           setAgentResponse(`Error: ${errMsg}`);
-          resumeListening();
+          stateRef.current = 'listening';
+          setState('listening');
+          vadRef.current?.start().catch(() => {});
         }
       } catch (err) {
         console.error('[VoiceMode] SSE parse error:', err);
@@ -335,7 +385,8 @@ export function useVoiceMode({
     // ---- VAD setup ----
     let vad: any = null;
     (async () => {
-      setStateSync('initializing');
+      stateRef.current = 'initializing';
+      setState('initializing');
       setError(null);
 
       try {
@@ -345,10 +396,10 @@ export function useVoiceMode({
           model: 'v5',
           baseAssetPath: '/vad/',
           onnxWASMBasePath: '/vad/',
-          positiveSpeechThreshold: 0.8,
+          positiveSpeechThreshold: 0.7,
           negativeSpeechThreshold: 0.3,
-          redemptionMs: 1500,
-          minSpeechMs: 300,
+          redemptionMs: 1200,
+          minSpeechMs: 150,
           preSpeechPadMs: 500,
 
           onFrameProcessed: (probs: any) => {
@@ -360,7 +411,13 @@ export function useVoiceMode({
           onSpeechStart: () => {
             console.log('[VoiceMode] Speech started');
             if (mountedRef.current) {
-              setStateSync('recording');
+              // Clear auto-send timer when new speech starts
+              if (autoSendTimerRef.current) {
+                clearTimeout(autoSendTimerRef.current);
+                autoSendTimerRef.current = null;
+              }
+              stateRef.current = 'recording';
+              setState('recording');
             }
           },
 
@@ -374,14 +431,16 @@ export function useVoiceMode({
               return;
             }
 
-            setStateSync('transcribing');
+            stateRef.current = 'transcribing';
+            setState('transcribing');
             const text = await transcribe(audio);
 
             if (!mountedRef.current) return;
 
             if (!text) {
               console.log('[VoiceMode] Empty transcription, back to listening');
-              setStateSync('listening');
+              stateRef.current = 'listening';
+              setState('listening');
               return;
             }
 
@@ -404,16 +463,16 @@ export function useVoiceMode({
                 : cleanedSegment;
 
               if (fullText) {
-                console.log('[VoiceMode] Sending:', fullText);
+                console.log('[VoiceMode] Sending (trigger):', fullText);
                 try { await vad.pause(); } catch {}
                 setAccumulatedText(fullText);
                 accumulatedRef.current = fullText;
-                await sendToAgent(fullText);
+                await sendToAgentRef.current(fullText);
               } else {
                 console.log('[VoiceMode] Trigger found but nothing to send');
-                // Show hint briefly
-                setLastTranscript('Nothing to send yet — speak your message first');
-                setStateSync('listening');
+                setLastTranscript('Nothing to send yet — speak first');
+                stateRef.current = 'listening';
+                setState('listening');
               }
             } else {
               // Accumulate text
@@ -423,14 +482,26 @@ export function useVoiceMode({
               console.log('[VoiceMode] Accumulated:', newAccum);
               setAccumulatedText(newAccum);
               accumulatedRef.current = newAccum;
-              setStateSync('listening');
+              stateRef.current = 'listening';
+              setState('listening');
+
+              // Start auto-send timer — will fire if no more speech in N seconds
+              if (autoSendTimerRef.current) clearTimeout(autoSendTimerRef.current);
+              autoSendTimerRef.current = setTimeout(() => {
+                const accum = accumulatedRef.current;
+                if (accum.trim() && mountedRef.current && stateRef.current === 'listening') {
+                  console.log('[VoiceMode] Auto-send after silence:', accum);
+                  sendToAgentRef.current(accum);
+                }
+              }, AUTO_SEND_DELAY_MS);
             }
           },
 
           onVADMisfire: () => {
             console.log('[VoiceMode] VAD misfire');
             if (mountedRef.current) {
-              setStateSync('listening');
+              stateRef.current = 'listening';
+              setState('listening');
             }
           },
         });
@@ -439,13 +510,15 @@ export function useVoiceMode({
         await vad.start();
 
         if (mountedRef.current) {
-          setStateSync('listening');
+          stateRef.current = 'listening';
+          setState('listening');
           console.log('[VoiceMode] VAD initialized and listening');
         }
       } catch (err: any) {
         console.error('[VoiceMode] VAD init error:', err);
         if (mountedRef.current) {
-          setStateSync('error');
+          stateRef.current = 'error';
+          setState('error');
           setError(err.message || 'Failed to initialize voice detection');
         }
       }
@@ -456,7 +529,6 @@ export function useVoiceMode({
       if (document.hidden) {
         vadRef.current?.pause().catch(() => {});
       } else if (vadRef.current && mountedRef.current) {
-        // Only resume if we're in a listening-like state
         if (stateRef.current === 'listening' || stateRef.current === 'recording') {
           vadRef.current.start().catch(() => {});
         }
@@ -469,6 +541,8 @@ export function useVoiceMode({
       console.log('[VoiceMode] Cleanup');
       mountedRef.current = false;
       document.removeEventListener('visibilitychange', handleVisibility);
+
+      if (autoSendTimerRef.current) clearTimeout(autoSendTimerRef.current);
 
       vadRef.current?.destroy().catch(() => {});
       vadRef.current = null;
@@ -487,17 +561,16 @@ export function useVoiceMode({
   }, [sessionKey, agentId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const retry = useCallback(() => {
+    clearAutoSend();
     setAccumulatedText('');
     accumulatedRef.current = '';
     setAgentResponse('');
     setLastTranscript('');
-    // Destroy old VAD
     vadRef.current?.destroy().catch(() => {});
     vadRef.current = null;
-    // Re-init will happen via the effect re-running... but we need to force it.
-    // Simplest: just reload the VAD inline
     (async () => {
-      setStateSync('initializing');
+      stateRef.current = 'initializing';
+      setState('initializing');
       setError(null);
       try {
         const { MicVAD } = await import('@ricky0123/vad-web');
@@ -505,46 +578,45 @@ export function useVoiceMode({
           model: 'v5',
           baseAssetPath: '/vad/',
           onnxWASMBasePath: '/vad/',
-          positiveSpeechThreshold: 0.8,
+          positiveSpeechThreshold: 0.7,
           negativeSpeechThreshold: 0.3,
-          redemptionMs: 1500,
-          minSpeechMs: 300,
+          redemptionMs: 1200,
+          minSpeechMs: 150,
           preSpeechPadMs: 500,
           onFrameProcessed: (probs: any) => {
             if (mountedRef.current) setSpeechProbability(probs.isSpeech);
           },
           onSpeechStart: () => {
-            if (mountedRef.current) setStateSync('recording');
+            if (mountedRef.current) { stateRef.current = 'recording'; setState('recording'); }
           },
           onSpeechEnd: async () => {
-            // Will be handled by the main effect's VAD instance
-            // This retry creates a fresh instance that won't have the full handlers
-            // For simplicity, just resume listening
-            if (mountedRef.current) setStateSync('listening');
+            if (mountedRef.current) { stateRef.current = 'listening'; setState('listening'); }
           },
           onVADMisfire: () => {
-            if (mountedRef.current) setStateSync('listening');
+            if (mountedRef.current) { stateRef.current = 'listening'; setState('listening'); }
           },
         });
         vadRef.current = vad;
         await vad.start();
-        if (mountedRef.current) setStateSync('listening');
+        if (mountedRef.current) { stateRef.current = 'listening'; setState('listening'); }
       } catch (err: any) {
         if (mountedRef.current) {
-          setStateSync('error');
+          stateRef.current = 'error';
+          setState('error');
           setError(err.message);
         }
       }
     })();
-  }, [setStateSync]);
+  }, [clearAutoSend]);
 
   const close = useCallback(() => {
+    clearAutoSend();
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current = null;
     }
     onCloseRef.current?.();
-  }, []);
+  }, [clearAutoSend]);
 
   return {
     state,
@@ -553,6 +625,7 @@ export function useVoiceMode({
     agentResponse,
     speechProbability,
     lastTranscript,
+    manualSend,
     retry,
     close,
   };

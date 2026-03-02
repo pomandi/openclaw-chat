@@ -45,6 +45,7 @@ export default function VoiceMode({
     agentResponse,
     speechProbability,
     lastTranscript,
+    manualSend,
     retry,
     close,
   } = useVoiceMode({
@@ -83,6 +84,9 @@ export default function VoiceMode({
         : state === 'error'
           ? 'var(--error)'
           : 'var(--accent)';
+
+  const canSend = accumulatedText.trim().length > 0
+    && state !== 'thinking' && state !== 'speaking' && state !== 'transcribing';
 
   return (
     <div className="fixed inset-0 z-50 bg-[var(--bg-primary)] flex flex-col animate-fade-in safe-top safe-bottom">
@@ -244,12 +248,20 @@ export default function VoiceMode({
             }`}>
               {accumulatedText}
             </div>
-            {state !== 'thinking' && state !== 'speaking' && (
-              <div className="text-xs text-[var(--text-muted)] mt-2 text-center">
-                Say &quot;g&ouml;nder&quot; to send
-              </div>
-            )}
           </div>
+        )}
+
+        {/* Send button — visible when there's accumulated text */}
+        {canSend && (
+          <button
+            onClick={manualSend}
+            className="flex items-center gap-2 px-6 py-3 bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white rounded-2xl text-sm font-medium transition-all active:scale-95 shadow-lg"
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+            </svg>
+            Send
+          </button>
         )}
 
         {/* Agent response */}
@@ -268,7 +280,7 @@ export default function VoiceMode({
       {/* Footer hint */}
       <div className="px-6 py-3 text-center shrink-0">
         <p className="text-xs text-[var(--text-muted)]">
-          &quot;g&ouml;nder&quot; = send &middot; &quot;kapat&quot; = close
+          Tap Send or say &quot;g&ouml;nder&quot; &middot; Auto-sends after 4s &middot; &quot;kapat&quot; = close
         </p>
       </div>
     </div>
